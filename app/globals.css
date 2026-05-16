@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .hide-spin-button::-webkit-inner-spin-button,
+  .hide-spin-button::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .hide-spin-button {
+    -moz-appearance: textfield;
+  }
+}
