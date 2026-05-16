@@ -54,8 +54,8 @@ export function AddProductModal({ categories, units, onClose, onAdded }: AddProd
       });
       toast.success("Product added successfully");
       onAdded(newProduct);
-    } catch (error: any) {
-      toast.error(error.message || "Failed to add product");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to add product");
     } finally {
       setLoading(false);
     }

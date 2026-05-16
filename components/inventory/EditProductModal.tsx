@@ -48,8 +48,8 @@ export function EditProductModal({ product, categories, units, onClose, onUpdate
       });
       toast.success("Product updated successfully");
       onUpdated();
-    } catch (error: any) {
-      toast.error(error.message || "Failed to update product");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to update product");
     } finally {
       setLoading(false);
     }

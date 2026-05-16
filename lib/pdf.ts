@@ -97,7 +97,8 @@ export async function generateBillPDF(sale: Sale): Promise<Blob> {
     },
   });
 
-  const finalY = (doc as any).lastAutoTable.finalY + 10;
+  const docWithAutoTable = doc as unknown as { lastAutoTable: { finalY: number } };
+  const finalY = docWithAutoTable.lastAutoTable ? docWithAutoTable.lastAutoTable.finalY + 10 : 100;
 
   // Summary
   doc.setFontSize(10);

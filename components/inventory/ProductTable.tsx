@@ -2,18 +2,17 @@
 
 import { useState } from "react";
 import { Product, Category, Unit } from "../../types";
-import { Edit, Trash2, PlusCircle, AlertCircle } from "lucide-react";
+import { Edit, Trash2, PlusCircle } from "lucide-react";
 
 interface ProductTableProps {
   products: Product[];
   categories: Category[];
-  units: Unit[];
   onEdit: (product: Product) => void;
   onDelete: (id: string) => void;
   onAddStock: (product: Product) => void;
 }
 
-export function ProductTable({ products, categories, units, onEdit, onDelete, onAddStock }: ProductTableProps) {
+export function ProductTable({ products, categories, onEdit, onDelete, onAddStock }: ProductTableProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [search, setSearch] = useState("");
 

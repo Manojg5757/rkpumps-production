@@ -50,8 +50,8 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
       setNote("");
       setShowManualForm(false);
       onNewEntry();
-    } catch (error: any) {
-      toast.error(error.message || "Failed to add stock entry");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to add stock entry");
     } finally {
       setLoading(false);
     }

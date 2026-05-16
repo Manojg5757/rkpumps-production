@@ -104,7 +104,6 @@ export default function InventoryPage() {
           <ProductTable 
             products={products} 
             categories={categories} 
-            units={units} 
             onEdit={setEditingProduct}
             onDelete={setProductToDelete}
             onAddStock={handleAddStock}

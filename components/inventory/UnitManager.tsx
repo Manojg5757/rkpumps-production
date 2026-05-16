@@ -47,8 +47,8 @@ export function UnitManager() {
       await deleteUnit(unitToDelete);
       setUnits(units.filter(u => u.id !== unitToDelete));
       toast.success("Unit deleted");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to delete unit");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to delete unit");
     } finally {
       setUnitToDelete(null);
     }

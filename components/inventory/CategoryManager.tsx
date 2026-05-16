@@ -47,8 +47,8 @@ export function CategoryManager() {
       await deleteCategory(categoryToDelete);
       setCategories(categories.filter(c => c.id !== categoryToDelete));
       toast.success("Category deleted");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to delete category");
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to delete category");
     } finally {
       setCategoryToDelete(null);
     }
