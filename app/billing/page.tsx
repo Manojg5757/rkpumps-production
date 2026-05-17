@@ -137,7 +137,9 @@ export default function BillingPage() {
     }
   };
 
-  const totalAmount = cart.reduce((sum, item) => sum + item.lineTaxableAmount + item.lineGSTAmount, 0);
+  const grandTotal = cart.reduce((sum, item) => sum + item.lineTaxableAmount + item.lineGSTAmount, 0);
+  const finalTotal = Math.round(grandTotal);
+  const roundOff = finalTotal - grandTotal;
 
   const handleCompleteSale = async () => {
     if (!customerPhone.trim()) {
@@ -177,7 +179,7 @@ export default function BillingPage() {
         finalCustId = newCust.id;
       }
 
-      const finalPaidAmount = paidAmount === "" ? totalAmount : Number(paidAmount);
+      const finalPaidAmount = paidAmount === "" ? finalTotal : Number(paidAmount);
 
       const sale = await completeSale(
         cart, 
@@ -288,21 +290,31 @@ export default function BillingPage() {
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
           <h2 className="text-lg font-bold text-gray-900 mb-3 border-b border-gray-100 pb-2">Payment Details</h2>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200">
-              <span className="text-sm font-medium text-gray-700">Total Invoice Amount</span>
-              <span className="font-bold text-gray-900">₹{totalAmount.toFixed(2)}</span>
+          <div className="space-y-2">
+            <div className="flex justify-between items-center text-sm text-gray-600 px-1">
+              <span>Grand Total</span>
+              <span>₹{grandTotal.toFixed(2)}</span>
             </div>
-            
-            <div className="grid grid-cols-2 gap-3">
+            {Math.abs(roundOff) >= 0.01 && (
+              <div className="flex justify-between items-center text-xs text-gray-500 px-1">
+                <span>Round Off</span>
+                <span>{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center bg-gray-50 p-2 rounded-lg border border-gray-200">
+              <span className="text-sm font-medium text-gray-700">Final Total (Payable)</span>
+              <span className="font-bold text-gray-900">₹{finalTotal}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Amount Paid Now (₹)</label>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   min="0"
-                  step="0.01"
-                  max={totalAmount}
-                  placeholder={`Default: ₹${totalAmount.toFixed(2)}`}
+                  step="1"
+                  max={finalTotal}
+                  placeholder={`Default: ₹${finalTotal}`}
                   value={paidAmount}
                   onChange={e => setPaidAmount(e.target.value === "" ? "" : Number(e.target.value))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-semibold text-green-700"
@@ -310,7 +322,7 @@ export default function BillingPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Payment Method</label>
-                <select 
+                <select
                   value={paymentMethod}
                   onChange={e => setPaymentMethod(e.target.value as any)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
@@ -322,10 +334,10 @@ export default function BillingPage() {
               </div>
             </div>
 
-            {paidAmount !== "" && Number(paidAmount) < totalAmount && (
+            {paidAmount !== "" && Number(paidAmount) < finalTotal && (
               <div className="flex justify-between items-center bg-amber-50 p-2 rounded-lg border border-amber-200">
                 <span className="text-sm font-medium text-amber-800">Pending Balance</span>
-                <span className="font-bold text-amber-900">₹{(totalAmount - Number(paidAmount)).toFixed(2)}</span>
+                <span className="font-bold text-amber-900">₹{finalTotal - Number(paidAmount)}</span>
               </div>
             )}
           </div>

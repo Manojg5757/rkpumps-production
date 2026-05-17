@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { StockEntry, Product } from "../../types";
-import { addStockEntry } from "../../lib/db";
+import { useState, useEffect } from "react";
+import { StockEntry, Product, Supplier } from "../../types";
+import { addStockEntry, getSuppliers } from "../../lib/db";
 import toast from "react-hot-toast";
 
 interface EntryReportProps {
@@ -13,13 +13,23 @@ interface EntryReportProps {
 
 export function EntryReport({ entries, products, onNewEntry }: EntryReportProps) {
   const [showManualForm, setShowManualForm] = useState(false);
-  
-  // Manual form state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+
   const [productId, setProductId] = useState("");
   const [type, setType] = useState<"IN" | "OUT">("IN");
   const [quantity, setQuantity] = useState("");
+  const [purchasePrice, setPurchasePrice] = useState("");
+  const [supplierId, setSupplierId] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const [filterType, setFilterType] = useState<"ALL" | "IN" | "OUT">("ALL");
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    getSuppliers().then(setSuppliers).catch(console.error);
+  }, []);
 
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +43,9 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
       const product = products.find(p => p.id === productId);
       if (!product) throw new Error("Product not found");
 
+      const entryNote = note.trim() ||
+        (type === 'IN' ? `Stock received${invoiceNumber ? ` — Bill: ${invoiceNumber}` : ''}` : 'Manual removal');
+
       await addStockEntry({
         productId,
         productName: product.name,
@@ -40,14 +53,16 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
         unitName: product.unitName,
         type,
         quantity: Number(quantity),
-        note: note.trim() || "Manual Entry",
+        purchasePrice: purchasePrice ? Number(purchasePrice) : undefined,
+        supplierId: supplierId || undefined,
+        invoiceNumber: invoiceNumber.trim() || undefined,
+        note: entryNote,
         date: new Date()
       });
-      
+
       toast.success("Stock entry added");
-      setProductId("");
-      setQuantity("");
-      setNote("");
+      setProductId(""); setQuantity(""); setPurchasePrice("");
+      setSupplierId(""); setInvoiceNumber(""); setNote("");
       setShowManualForm(false);
       onNewEntry();
     } catch (error) {
@@ -57,10 +72,16 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
     }
   };
 
+  const filteredEntries = entries.filter(e => {
+    const matchesType = filterType === "ALL" || e.type === filterType;
+    const matchesSearch = !search || e.productName.toLowerCase().includes(search.toLowerCase());
+    return matchesType && matchesSearch;
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end mb-4 print:hidden">
-        <button 
+        <button
           onClick={() => setShowManualForm(!showManualForm)}
           className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
         >
@@ -73,9 +94,9 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
           <h3 className="text-lg font-bold mb-4 text-gray-900">Manual Stock Entry</h3>
           <form onSubmit={handleManualSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
-              <select 
-                value={productId} 
+              <label className="block text-sm font-medium text-gray-700 mb-1">Product *</label>
+              <select
+                value={productId}
                 onChange={e => setProductId(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
               >
@@ -83,23 +104,23 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
                 {products.map(p => <option key={p.id} value={p.id}>{p.name} (Stock: {p.stockQuantity})</option>)}
               </select>
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-              <select 
-                value={type} 
+              <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
+              <select
+                value={type}
                 onChange={e => setType(e.target.value as "IN" | "OUT")}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="IN">IN (Receive Stock)</option>
-                <option value="OUT">OUT (Remove Stock / Damage)</option>
+                <option value="OUT">OUT (Remove / Damage)</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-              <input 
-                type="number" 
+              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+              <input
+                type="number"
                 min="1"
                 value={quantity}
                 onChange={e => setQuantity(e.target.value)}
@@ -107,20 +128,60 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Note (Optional)</label>
-              <input 
-                type="text" 
+            {type === 'IN' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price per Unit (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={purchasePrice}
+                    onChange={e => setPurchasePrice(e.target.value)}
+                    placeholder="Optional"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Supplier</label>
+                  <select
+                    value={supplierId}
+                    onChange={e => setSupplierId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- No Supplier --</option>
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Supplier Bill / Invoice No.</label>
+                  <input
+                    type="text"
+                    value={invoiceNumber}
+                    onChange={e => setInvoiceNumber(e.target.value)}
+                    placeholder="Optional"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className={type === 'IN' ? '' : 'md:col-span-2'}>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Note</label>
+              <input
+                type="text"
                 placeholder="e.g. Supplier delivery, damage write-off"
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
-            
+
             <div className="md:col-span-2 flex justify-end mt-2">
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={loading}
                 className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
@@ -130,6 +191,26 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
           </form>
         </div>
       )}
+
+      {/* Filters */}
+      <div className="flex flex-col md:flex-row gap-3 print:hidden">
+        <input
+          type="text"
+          placeholder="Search by product name..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 flex-1"
+        />
+        <select
+          value={filterType}
+          onChange={e => setFilterType(e.target.value as any)}
+          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="ALL">All Types</option>
+          <option value="IN">IN Only</option>
+          <option value="OUT">OUT Only</option>
+        </select>
+      </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
@@ -141,11 +222,12 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
                 <th className="p-4">Category</th>
                 <th className="p-4 text-center">Type</th>
                 <th className="p-4 text-right">Qty</th>
+                <th className="p-4 text-right">Purchase Price</th>
                 <th className="p-4">Note</th>
               </tr>
             </thead>
             <tbody>
-              {entries.map(entry => (
+              {filteredEntries.map(entry => (
                 <tr key={entry.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-4 text-sm text-gray-600">{new Date(entry.date).toLocaleString('en-IN')}</td>
                   <td className="p-4 font-medium text-gray-900">{entry.productName}</td>
@@ -156,12 +238,15 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
                     </span>
                   </td>
                   <td className="p-4 text-right font-bold text-gray-900">{entry.quantity} {entry.unitName}</td>
+                  <td className="p-4 text-right text-gray-600 text-sm">
+                    {entry.purchasePrice ? `₹${entry.purchasePrice.toFixed(2)}` : '-'}
+                  </td>
                   <td className="p-4 text-gray-500 text-sm">{entry.note || '-'}</td>
                 </tr>
               ))}
-              {entries.length === 0 && (
+              {filteredEntries.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-gray-500">
+                  <td colSpan={7} className="p-8 text-center text-gray-500">
                     No stock entries found.
                   </td>
                 </tr>

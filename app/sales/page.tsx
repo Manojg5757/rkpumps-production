@@ -5,12 +5,14 @@ import { searchSales } from "../../lib/db";
 import { generateBillPDF } from "../../lib/pdf";
 import { Sale } from "../../types";
 import { SalesTable } from "../../components/sales/SalesTable";
+import { AddPaymentModal } from "../../components/sales/AddPaymentModal";
 import { Search, Download } from "lucide-react";
 
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
+  const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -22,7 +24,7 @@ export default function SalesPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await searchSales({}); // Load all (or limited by db default) initially
+      const data = await searchSales({});
       setSales(data);
     } catch (error) {
       console.error(error);
@@ -37,17 +39,18 @@ export default function SalesPage() {
     try {
       const allData = await searchSales({});
       const term = searchTerm.toLowerCase();
-      
+
       const filtered = allData.filter(s => {
-        const matchesSearch = 
+        const matchesSearch =
           s.customer.name.toLowerCase().includes(term) ||
           s.billNumber.toLowerCase().includes(term) ||
-          (s.customer.gstin && s.customer.gstin.toLowerCase().includes(term));
+          (s.customer.gstin && s.customer.gstin.toLowerCase().includes(term)) ||
+          (s.customer.phone && s.customer.phone.includes(term));
 
         let matchesDate = true;
         const saleDate = new Date(s.date);
         saleDate.setHours(0, 0, 0, 0);
-        
+
         if (startDate) {
           const [sy, sm, sd] = startDate.split('-').map(Number);
           const start = new Date(sy, sm - 1, sd);
@@ -63,7 +66,7 @@ export default function SalesPage() {
 
         return matchesSearch && matchesDate;
       });
-      
+
       setSales(filtered);
     } finally {
       setLoading(false);
@@ -72,34 +75,8 @@ export default function SalesPage() {
 
   const handleExportBulk = () => {
     if (sales.length === 0) return;
-    
-    const exportData = sales.filter(s => {
-      let matchesDate = true;
-      const saleDate = new Date(s.date);
-      saleDate.setHours(0, 0, 0, 0);
-      
-      if (startDate) {
-        const [sy, sm, sd] = startDate.split('-').map(Number);
-        const start = new Date(sy, sm - 1, sd);
-        start.setHours(0, 0, 0, 0);
-        if (saleDate < start) matchesDate = false;
-      }
-      if (endDate) {
-        const [ey, em, ed] = endDate.split('-').map(Number);
-        const end = new Date(ey, em - 1, ed);
-        end.setHours(23, 59, 59, 999);
-        if (saleDate > end) matchesDate = false;
-      }
-      return matchesDate;
-    });
-
-    if (exportData.length === 0) {
-      alert("No data to export for the selected date range.");
-      return;
-    }
-
-    const headers = ["Date", "Bill Number", "Customer Name", "Customer Phone", "GSTIN", "Taxable Amount", "GST Amount", "Grand Total"];
-    const rows = exportData.map(s => [
+    const headers = ["Date", "Bill Number", "Customer Name", "Customer Phone", "GSTIN", "Taxable Amount", "GST Amount", "Grand Total", "Paid Amount", "Pending Amount", "Payment Status"];
+    const rows = sales.map(s => [
       new Date(s.date).toLocaleDateString(),
       s.billNumber,
       `"${s.customer.name}"`,
@@ -107,15 +84,18 @@ export default function SalesPage() {
       s.customer.gstin || "",
       s.totalTaxableAmount.toFixed(2),
       s.totalGSTAmount.toFixed(2),
-      s.grandTotal.toFixed(2)
+      s.grandTotal.toFixed(2),
+      (s.paidAmount || 0).toFixed(2),
+      (s.pendingAmount || 0).toFixed(2),
+      s.paymentStatus || 'paid'
     ]);
-    
+
     const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Bulk_Sales_Report_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `Sales_Report_${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -141,12 +121,13 @@ export default function SalesPage() {
 
   const totalRevenue = sales.reduce((sum, s) => sum + s.grandTotal, 0);
   const totalGST = sales.reduce((sum, s) => sum + s.totalGSTAmount, 0);
+  const totalPending = sales.reduce((sum, s) => sum + (s.pendingAmount || 0), 0);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Sales History</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
           <p className="text-sm text-indigo-800 font-medium">Total Revenue</p>
           <p className="text-2xl font-bold text-indigo-900">₹{totalRevenue.toLocaleString('en-IN')}</p>
@@ -154,6 +135,10 @@ export default function SalesPage() {
         <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
           <p className="text-sm text-gray-600 font-medium">Total GST Collected</p>
           <p className="text-2xl font-bold text-gray-900">₹{totalGST.toLocaleString('en-IN')}</p>
+        </div>
+        <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
+          <p className="text-sm text-amber-800 font-medium">Total Pending</p>
+          <p className="text-2xl font-bold text-amber-900">₹{totalPending.toLocaleString('en-IN')}</p>
         </div>
         <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
           <p className="text-sm text-gray-600 font-medium">Number of Invoices</p>
@@ -163,21 +148,21 @@ export default function SalesPage() {
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-4">
         <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
-          <input 
-            type="text" 
-            placeholder="Search by Bill No, Customer Name, or GSTIN..." 
+          <input
+            type="text"
+            placeholder="Search by Bill No, Customer Name, Phone, or GSTIN..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
           />
-          <input 
+          <input
             type="date"
             value={startDate}
             onChange={e => setStartDate(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
             title="Start Date"
           />
-          <input 
+          <input
             type="date"
             value={endDate}
             onChange={e => setEndDate(e.target.value)}
@@ -187,8 +172,8 @@ export default function SalesPage() {
           <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2 justify-center">
             <Search size={18} /> Search
           </button>
-          <button 
-            type="button" 
+          <button
+            type="button"
             onClick={handleExportBulk}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 justify-center"
           >
@@ -200,7 +185,20 @@ export default function SalesPage() {
       {loading ? (
         <div className="text-center py-10">Loading sales history...</div>
       ) : (
-        <SalesTable sales={sales} onDownload={handleDownload} onPrint={handlePrint} />
+        <SalesTable
+          sales={sales}
+          onDownload={handleDownload}
+          onPrint={handlePrint}
+          onAddPayment={setPaymentSale}
+        />
+      )}
+
+      {paymentSale && (
+        <AddPaymentModal
+          sale={paymentSale}
+          onClose={() => setPaymentSale(null)}
+          onPaymentAdded={() => { setPaymentSale(null); loadData(); }}
+        />
       )}
     </div>
   );

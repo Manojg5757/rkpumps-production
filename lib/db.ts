@@ -35,6 +35,10 @@ export const addSupplier = async (data: Omit<Supplier, 'id' | 'createdAt'>): Pro
   return { ...data, id: docRef.id, createdAt: new Date() };
 };
 
+export const deleteSupplier = async (id: string): Promise<void> => {
+  await deleteDoc(doc(db, 'suppliers', id));
+};
+
 // --- Customers ---
 export const getCustomers = async (): Promise<Customer[]> => {
   const q = query(collection(db, 'customers'));
@@ -64,36 +68,37 @@ export const updateCustomer = async (id: string, data: Partial<Customer>): Promi
 
 // --- Payments ---
 export const getPayments = async (customerId?: string): Promise<Payment[]> => {
-  let q = query(collection(db, 'payments'), orderBy('createdAt', 'desc'));
-  if (customerId) {
-    q = query(collection(db, 'payments'), where('customerId', '==', customerId), orderBy('createdAt', 'desc'));
-  }
+  // Always fetch all payments and filter client-side to avoid composite index requirements
+  const q = query(collection(db, 'payments'), orderBy('createdAt', 'desc'));
   const snap = await getDocs(q);
-  return snap.docs.map(d => {
+  let results = snap.docs.map(d => {
     const data = d.data();
     return { ...data, id: d.id, createdAt: data.createdAt?.toDate() } as Payment;
   });
+  if (customerId) {
+    results = results.filter(p => p.customerId === customerId);
+  }
+  return results;
 };
 
 export const addPayment = async (data: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment> => {
   return await runTransaction(db, async (transaction) => {
-    // Add payment record
-    const paymentRef = doc(collection(db, 'payments'));
-    const paymentData = { ...data, createdAt: Timestamp.now() };
-    transaction.set(paymentRef, paymentData);
-
-    // Update Invoice
+    // ALL READS FIRST (Firestore requirement)
     const saleRef = doc(db, 'sales', data.invoiceId);
     const saleDoc = await transaction.get(saleRef);
     if (!saleDoc.exists()) throw new Error('Invoice not found');
 
+    // THEN WRITES
     const saleData = saleDoc.data() as Sale;
+    // Use finalTotal for new invoices; fall back to grandTotal for legacy records
+    const baseTotal = saleData.finalTotal ?? Math.round(saleData.grandTotal);
     const newPaidAmount = (saleData.paidAmount || 0) + data.amount;
-    const newPendingAmount = saleData.grandTotal - newPaidAmount;
-    
-    let status = 'partial';
+    const newPendingAmount = baseTotal - newPaidAmount;
+    let status: 'paid' | 'partial' | 'unpaid' = 'partial';
     if (newPendingAmount <= 0) status = 'paid';
-    
+
+    const paymentRef = doc(collection(db, 'payments'));
+    transaction.set(paymentRef, { ...data, createdAt: Timestamp.now() });
     transaction.update(saleRef, {
       paidAmount: newPaidAmount,
       pendingAmount: newPendingAmount,
@@ -256,6 +261,28 @@ export const getSaleById = async (id: string): Promise<Sale> => {
   return { ...data, id: d.id, date: data.date?.toDate() } as Sale;
 };
 
+export const getSalesByCustomer = async (customerId: string): Promise<Sale[]> => {
+  const q = query(collection(db, 'sales'), orderBy('date', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => {
+      const data = d.data();
+      return { ...data, id: d.id, date: data.date?.toDate() } as Sale;
+    })
+    .filter(s => s.customerId === customerId);
+};
+
+export const getPendingSales = async (): Promise<Sale[]> => {
+  const q = query(collection(db, 'sales'), orderBy('date', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map(d => {
+      const data = d.data();
+      return { ...data, id: d.id, date: data.date?.toDate() } as Sale;
+    })
+    .filter(s => s.paymentStatus === 'partial' || s.paymentStatus === 'unpaid');
+};
+
 export const completeSale = async (
   cart: CartItem[], 
   customerId: string,
@@ -301,9 +328,11 @@ export const completeSale = async (
     const saleRef = doc(collection(db, 'sales'));
     const totalTaxableAmount = cart.reduce((sum, item) => sum + item.lineTaxableAmount, 0);
     const totalGSTAmount = cart.reduce((sum, item) => sum + item.lineGSTAmount, 0);
-    const grandTotal = totalTaxableAmount + totalGSTAmount;
-    
-    const pendingAmount = grandTotal - paidAmount;
+    const grandTotal = totalTaxableAmount + totalGSTAmount;      // raw, full precision
+    const finalTotal = Math.round(grandTotal);                   // what customer actually pays
+    const roundOff = finalTotal - grandTotal;                    // positive = rounded up, negative = rounded down
+
+    const pendingAmount = finalTotal - paidAmount;
     let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'partial';
     if (pendingAmount <= 0) paymentStatus = 'paid';
     else if (paidAmount === 0) paymentStatus = 'unpaid';
@@ -317,6 +346,8 @@ export const completeSale = async (
       totalTaxableAmount,
       totalGSTAmount,
       grandTotal,
+      roundOff,
+      finalTotal,
       paidAmount,
       pendingAmount,
       paymentStatus
@@ -331,7 +362,7 @@ export const completeSale = async (
       transaction.set(entryRef, {
         productId: item.productId,
         productName: item.name,
-        categoryName: pDoc.categoryId,
+        categoryName: pDoc.categoryName,
         unitName: item.unitName,
         type: 'OUT',
         quantity: item.quantity,

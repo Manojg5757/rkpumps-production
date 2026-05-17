@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(npx next *)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const b64=fs.readFileSync\\('./node_modules/jspdf/dist/jspdf.es.min.js','utf8'\\).slice\\(0,200\\); console.log\\(b64\\);\")",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

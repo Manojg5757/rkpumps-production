@@ -188,7 +188,7 @@ export function EditProductModal({ product, categories, units, onClose, onUpdate
                   <h4 className="font-medium text-indigo-900 text-sm">New Supplier Details</h4>
                   <input required type="text" placeholder="Supplier Name" value={supplierName} onChange={e => setSupplierName(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Phone (Optional)" value={supplierPhone} onChange={e => setSupplierPhone(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+                    <input type="text" placeholder="Phone (Optional)" maxLength={10} value={supplierPhone} onChange={e => setSupplierPhone(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
                     <input type="text" placeholder="Address (Optional)" value={supplierAddress} onChange={e => setSupplierAddress(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
                   </div>
                 </div>

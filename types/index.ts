@@ -73,7 +73,9 @@ export type Sale = {
   items: CartItem[];
   totalTaxableAmount: number;
   totalGSTAmount: number;
-  grandTotal: number;
+  grandTotal: number;    // raw sum before rounding
+  roundOff?: number;     // finalTotal - grandTotal (positive or negative)
+  finalTotal?: number;   // Math.round(grandTotal) — the amount customer actually pays
   paidAmount: number;
   pendingAmount: number;
   paymentStatus: PaymentStatus;
