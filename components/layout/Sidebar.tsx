@@ -38,7 +38,14 @@ export function Sidebar({ isOpen = false, setIsOpen }: SidebarProps) {
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         <div className="p-6 text-xl font-bold border-b border-gray-800 flex justify-between items-center">
-          <span>{BUSINESS_INFO.name}</span>
+          <div className="flex items-center space-x-3">
+            <img 
+              src="https://firebasestorage.googleapis.com/v0/b/rkpumps-79028.firebasestorage.app/o/rkpumpslogo.webp?alt=media&token=fd05d40d-4c59-401b-ba6b-3918230bbf59" 
+              alt="Logo" 
+              className="h-8 w-8 rounded-full object-cover" 
+            />
+            <span>{BUSINESS_INFO.name}</span>
+          </div>
           <button 
             className="md:hidden text-gray-400 hover:text-white p-1 -mr-2"
             onClick={() => setIsOpen?.(false)}

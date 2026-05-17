@@ -19,7 +19,13 @@ export function PageWrapper({ children }: { children: ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile Header */}
         <header className="md:hidden bg-gray-900 text-white p-4 flex items-center justify-between">
-          <span className="font-bold text-lg">{BUSINESS_INFO.name}</span>
+          <div className="flex items-center">
+            <img 
+              src="https://firebasestorage.googleapis.com/v0/b/rkpumps-79028.firebasestorage.app/o/rkpumpslogo.webp?alt=media&token=fd05d40d-4c59-401b-ba6b-3918230bbf59" 
+              alt="Logo" 
+              className="h-8 w-8 rounded-full object-cover" 
+            />
+          </div>
           <button onClick={() => setSidebarOpen(true)} className="p-1 text-gray-300 hover:text-white">
             <Menu size={24} />
           </button>

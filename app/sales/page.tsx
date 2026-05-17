@@ -49,12 +49,14 @@ export default function SalesPage() {
         saleDate.setHours(0, 0, 0, 0);
         
         if (startDate) {
-          const start = new Date(startDate);
+          const [sy, sm, sd] = startDate.split('-').map(Number);
+          const start = new Date(sy, sm - 1, sd);
           start.setHours(0, 0, 0, 0);
           if (saleDate < start) matchesDate = false;
         }
         if (endDate) {
-          const end = new Date(endDate);
+          const [ey, em, ed] = endDate.split('-').map(Number);
+          const end = new Date(ey, em - 1, ed);
           end.setHours(23, 59, 59, 999);
           if (saleDate > end) matchesDate = false;
         }
@@ -71,8 +73,33 @@ export default function SalesPage() {
   const handleExportBulk = () => {
     if (sales.length === 0) return;
     
+    const exportData = sales.filter(s => {
+      let matchesDate = true;
+      const saleDate = new Date(s.date);
+      saleDate.setHours(0, 0, 0, 0);
+      
+      if (startDate) {
+        const [sy, sm, sd] = startDate.split('-').map(Number);
+        const start = new Date(sy, sm - 1, sd);
+        start.setHours(0, 0, 0, 0);
+        if (saleDate < start) matchesDate = false;
+      }
+      if (endDate) {
+        const [ey, em, ed] = endDate.split('-').map(Number);
+        const end = new Date(ey, em - 1, ed);
+        end.setHours(23, 59, 59, 999);
+        if (saleDate > end) matchesDate = false;
+      }
+      return matchesDate;
+    });
+
+    if (exportData.length === 0) {
+      alert("No data to export for the selected date range.");
+      return;
+    }
+
     const headers = ["Date", "Bill Number", "Customer Name", "Customer Phone", "GSTIN", "Taxable Amount", "GST Amount", "Grand Total"];
-    const rows = sales.map(s => [
+    const rows = exportData.map(s => [
       new Date(s.date).toLocaleDateString(),
       s.billNumber,
       `"${s.customer.name}"`,
