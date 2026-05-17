@@ -21,8 +21,8 @@ export function RevenueChart({ sales }: { sales: Sale[] }) {
   });
 
   return (
-    <div className="h-72 w-full min-h-[300px]">
-      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+    <div style={{ width: '100%', height: 300 }}>
+      <ResponsiveContainer width="99%" height={300} minWidth={1}>
         <BarChart data={data}>
           <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
           <YAxis 
