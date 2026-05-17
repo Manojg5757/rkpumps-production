@@ -108,19 +108,28 @@ export async function generateBillPDF(sale: Sale): Promise<Blob> {
   doc.setFont('helvetica', 'bold');
   doc.text(`Grand Total:     ${formatCurrency(sale.grandTotal)}`, 130, finalY + 12);
 
-  doc.line(10, finalY + 16, 200, finalY + 16);
+  if (sale.pendingAmount > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Amount Paid:     ${formatCurrency(sale.paidAmount || 0)}`, 130, finalY + 18);
+    doc.setTextColor(200, 0, 0); // Red for pending
+    doc.text(`Pending Balance: ${formatCurrency(sale.pendingAmount)}`, 130, finalY + 24);
+    doc.setTextColor(0, 0, 0); // Reset color
+  }
+
+  const textYOffset = sale.pendingAmount > 0 ? 30 : 16;
+  doc.line(10, finalY + textYOffset, 200, finalY + textYOffset);
 
   // Amount in Words
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Amount in Words: ${numberToWords(sale.grandTotal)}`, 10, finalY + 24);
+  doc.text(`Amount in Words: ${numberToWords(sale.grandTotal)}`, 10, finalY + textYOffset + 8);
 
-  doc.line(10, finalY + 28, 200, finalY + 28);
+  doc.line(10, finalY + textYOffset + 12, 200, finalY + textYOffset + 12);
 
   // Footer
   doc.setFontSize(9);
-  doc.text('This is a computer-generated invoice.', 105, finalY + 36, { align: 'center' });
-  doc.text('Thank you for your business!', 105, finalY + 41, { align: 'center' });
+  doc.text('This is a computer-generated invoice.', 105, finalY + textYOffset + 20, { align: 'center' });
+  doc.text('Thank you for your business!', 105, finalY + textYOffset + 25, { align: 'center' });
 
   return doc.output('blob');
 }

@@ -8,6 +8,24 @@ export type Category = {
   name: string;
 };
 
+export type Supplier = {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  createdAt: Date;
+};
+
+export type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+  address?: string;
+  gstin?: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type Product = {
   id: string;
   name: string;
@@ -16,7 +34,10 @@ export type Product = {
   unitId: string;
   unitName: string;
   stockQuantity: number;
-  basePrice: number;
+  basePrice: number; // selling price without GST
+  purchasePrice: number; // cost price
+  supplierId?: string;
+  supplierName?: string;
   gstPercentage: number;
   lowStockThreshold: number;
   updatedAt: Date;
@@ -28,6 +49,7 @@ export type CartItem = {
   unitName: string;
   quantity: number;
   basePrice: number;
+  purchasePrice: number; // capture at time of sale
   gstPercentage: number;
   gstAmountPerUnit: number;
   lineTaxableAmount: number;
@@ -35,22 +57,36 @@ export type CartItem = {
   lineTotal: number;
 };
 
-export type CustomerInfo = {
-  name: string;
-  phone?: string;
-  gstin?: string;
-  address?: string;
-};
+export type PaymentStatus = 'paid' | 'partial' | 'unpaid';
 
 export type Sale = {
   id: string;
   billNumber: string;
   date: Date;
-  customer: CustomerInfo;
+  customerId: string;
+  customer: {
+    name: string;
+    phone: string;
+    gstin?: string;
+    address?: string;
+  };
   items: CartItem[];
   totalTaxableAmount: number;
   totalGSTAmount: number;
   grandTotal: number;
+  paidAmount: number;
+  pendingAmount: number;
+  paymentStatus: PaymentStatus;
+};
+
+export type Payment = {
+  id: string;
+  invoiceId: string;
+  customerId: string;
+  amount: number;
+  method: 'Cash' | 'UPI' | 'Bank';
+  note?: string;
+  createdAt: Date;
 };
 
 export type StockEntry = {
@@ -61,6 +97,18 @@ export type StockEntry = {
   unitName: string;
   type: 'IN' | 'OUT';
   quantity: number;
+  purchasePrice?: number;
+  supplierId?: string;
+  invoiceNumber?: string;
   note?: string;
   date: Date;
+};
+
+export type Expense = {
+  id: string;
+  title: string;
+  amount: number;
+  category: string;
+  note?: string;
+  createdAt: Date;
 };

@@ -15,7 +15,112 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Unit, Category, Product, Sale, StockEntry, CartItem, CustomerInfo } from '../types';
+import { Supplier, Customer, Payment, Expense, Unit, Category, Product, Sale, StockEntry, CartItem } from '../types';
+
+// --- Suppliers ---
+export const getSuppliers = async (): Promise<Supplier[]> => {
+  const q = query(collection(db, 'suppliers'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => {
+    const data = d.data();
+    return { ...data, id: d.id, createdAt: data.createdAt?.toDate() } as Supplier;
+  });
+};
+
+export const addSupplier = async (data: Omit<Supplier, 'id' | 'createdAt'>): Promise<Supplier> => {
+  const docRef = await addDoc(collection(db, 'suppliers'), {
+    ...data,
+    createdAt: Timestamp.now()
+  });
+  return { ...data, id: docRef.id, createdAt: new Date() };
+};
+
+// --- Customers ---
+export const getCustomers = async (): Promise<Customer[]> => {
+  const q = query(collection(db, 'customers'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => {
+    const data = d.data();
+    return { ...data, id: d.id, createdAt: data.createdAt?.toDate(), updatedAt: data.updatedAt?.toDate() } as Customer;
+  });
+};
+
+export const addCustomer = async (data: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Promise<Customer> => {
+  const docRef = await addDoc(collection(db, 'customers'), {
+    ...data,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now()
+  });
+  return { ...data, id: docRef.id, createdAt: new Date(), updatedAt: new Date() };
+};
+
+export const updateCustomer = async (id: string, data: Partial<Customer>): Promise<void> => {
+  const ref = doc(db, 'customers', id);
+  await updateDoc(ref, {
+    ...data,
+    updatedAt: Timestamp.now()
+  });
+};
+
+// --- Payments ---
+export const getPayments = async (customerId?: string): Promise<Payment[]> => {
+  let q = query(collection(db, 'payments'), orderBy('createdAt', 'desc'));
+  if (customerId) {
+    q = query(collection(db, 'payments'), where('customerId', '==', customerId), orderBy('createdAt', 'desc'));
+  }
+  const snap = await getDocs(q);
+  return snap.docs.map(d => {
+    const data = d.data();
+    return { ...data, id: d.id, createdAt: data.createdAt?.toDate() } as Payment;
+  });
+};
+
+export const addPayment = async (data: Omit<Payment, 'id' | 'createdAt'>): Promise<Payment> => {
+  return await runTransaction(db, async (transaction) => {
+    // Add payment record
+    const paymentRef = doc(collection(db, 'payments'));
+    const paymentData = { ...data, createdAt: Timestamp.now() };
+    transaction.set(paymentRef, paymentData);
+
+    // Update Invoice
+    const saleRef = doc(db, 'sales', data.invoiceId);
+    const saleDoc = await transaction.get(saleRef);
+    if (!saleDoc.exists()) throw new Error('Invoice not found');
+
+    const saleData = saleDoc.data() as Sale;
+    const newPaidAmount = (saleData.paidAmount || 0) + data.amount;
+    const newPendingAmount = saleData.grandTotal - newPaidAmount;
+    
+    let status = 'partial';
+    if (newPendingAmount <= 0) status = 'paid';
+    
+    transaction.update(saleRef, {
+      paidAmount: newPaidAmount,
+      pendingAmount: newPendingAmount,
+      paymentStatus: status
+    });
+
+    return { id: paymentRef.id, ...data, createdAt: new Date() } as Payment;
+  });
+};
+
+// --- Expenses ---
+export const getExpenses = async (): Promise<Expense[]> => {
+  const q = query(collection(db, 'expenses'), orderBy('createdAt', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => {
+    const data = d.data();
+    return { ...data, id: d.id, createdAt: data.createdAt?.toDate() } as Expense;
+  });
+};
+
+export const addExpense = async (data: Omit<Expense, 'id' | 'createdAt'>): Promise<Expense> => {
+  const docRef = await addDoc(collection(db, 'expenses'), {
+    ...data,
+    createdAt: Timestamp.now()
+  });
+  return { ...data, id: docRef.id, createdAt: new Date() };
+};
 
 // --- Units ---
 export const getUnits = async (): Promise<Unit[]> => {
@@ -151,7 +256,13 @@ export const getSaleById = async (id: string): Promise<Sale> => {
   return { ...data, id: d.id, date: data.date?.toDate() } as Sale;
 };
 
-export const completeSale = async (cart: CartItem[], customer: CustomerInfo): Promise<Sale> => {
+export const completeSale = async (
+  cart: CartItem[], 
+  customerId: string,
+  customerData: { name: string; phone: string; gstin?: string; address?: string },
+  paidAmount: number,
+  paymentMethod: 'Cash' | 'UPI' | 'Bank'
+): Promise<Sale> => {
   return await runTransaction(db, async (transaction) => {
     // 1. Verify stock
     const productRefs = cart.map(item => doc(db, 'products', item.productId));
@@ -192,14 +303,23 @@ export const completeSale = async (cart: CartItem[], customer: CustomerInfo): Pr
     const totalGSTAmount = cart.reduce((sum, item) => sum + item.lineGSTAmount, 0);
     const grandTotal = totalTaxableAmount + totalGSTAmount;
     
+    const pendingAmount = grandTotal - paidAmount;
+    let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'partial';
+    if (pendingAmount <= 0) paymentStatus = 'paid';
+    else if (paidAmount === 0) paymentStatus = 'unpaid';
+
     const saleData = {
       billNumber,
       date: Timestamp.now(),
-      customer,
+      customerId,
+      customer: customerData,
       items: cart,
       totalTaxableAmount,
       totalGSTAmount,
-      grandTotal
+      grandTotal,
+      paidAmount,
+      pendingAmount,
+      paymentStatus
     };
     
     transaction.set(saleRef, saleData);
@@ -211,7 +331,7 @@ export const completeSale = async (cart: CartItem[], customer: CustomerInfo): Pr
       transaction.set(entryRef, {
         productId: item.productId,
         productName: item.name,
-        categoryName: pDoc.categoryId, // Ideally denormalized name
+        categoryName: pDoc.categoryId,
         unitName: item.unitName,
         type: 'OUT',
         quantity: item.quantity,
@@ -219,6 +339,19 @@ export const completeSale = async (cart: CartItem[], customer: CustomerInfo): Pr
         date: Timestamp.now()
       });
     });
+
+    // 6. Create Initial Payment Record (if paidAmount > 0)
+    if (paidAmount > 0) {
+      const paymentRef = doc(collection(db, 'payments'));
+      transaction.set(paymentRef, {
+        invoiceId: saleRef.id,
+        customerId,
+        amount: paidAmount,
+        method: paymentMethod,
+        note: `Initial payment for ${billNumber}`,
+        createdAt: Timestamp.now()
+      });
+    }
 
     return { id: saleRef.id, ...saleData, date: new Date() } as Sale;
   });

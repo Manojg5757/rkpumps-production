@@ -15,7 +15,7 @@ export function CartPanel({ cart, onSetQuantity, onRemove }: CartPanelProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto pr-2 my-4 space-y-3">
+    <div className="my-4 space-y-3">
       {cart.map(item => (
         <div key={item.productId} className="bg-gray-50 p-3 rounded-lg border border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex-1">

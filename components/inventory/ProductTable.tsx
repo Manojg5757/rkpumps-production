@@ -63,9 +63,11 @@ export function ProductTable({ products, categories, onEdit, onDelete, onAddStoc
               <th className="p-3">Category</th>
               <th className="p-3">Unit</th>
               <th className="p-3 text-right">Stock</th>
+              <th className="p-3 text-right">Purchase Price</th>
               <th className="p-3 text-right">Base Price</th>
               <th className="p-3 text-center">GST %</th>
               <th className="p-3 text-right">Final Price</th>
+              <th className="p-3 text-left">Supplier</th>
               <th className="p-3 text-center">Actions</th>
             </tr>
           </thead>
@@ -85,9 +87,11 @@ export function ProductTable({ products, categories, onEdit, onDelete, onAddStoc
                   <td className="p-3 text-gray-600">{p.categoryName}</td>
                   <td className="p-3 text-gray-600">{p.unitName}</td>
                   <td className="p-3 text-right font-semibold text-gray-900">{p.stockQuantity}</td>
+                  <td className="p-3 text-right text-gray-600">₹{(p.purchasePrice || 0).toFixed(2)}</td>
                   <td className="p-3 text-right text-gray-600">₹{p.basePrice.toFixed(2)}</td>
                   <td className="p-3 text-center text-gray-600">{p.gstPercentage}%</td>
                   <td className="p-3 text-right font-medium text-indigo-700">₹{finalPrice.toFixed(2)}</td>
+                  <td className="p-3 text-left text-gray-500 text-sm">{p.supplierName || '-'}</td>
                   <td className="p-3 text-center">
                     <div className="flex items-center justify-center gap-2">
                       <button onClick={() => onAddStock(p)} className="text-green-600 hover:text-green-800 p-1" title="Add Stock">
