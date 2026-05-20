@@ -201,9 +201,12 @@ export default function BillingPage() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      
+
       toast.success(`Sale complete — ${sale.billNumber}`);
-      router.push('/');
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        router.push('/');
+      }, 500);
     } catch (error: any) {
       toast.error(error.message || "Failed to complete sale");
     } finally {
