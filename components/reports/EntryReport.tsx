@@ -18,7 +18,8 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
   const [productId, setProductId] = useState("");
   const [type, setType] = useState<"IN" | "OUT">("IN");
   const [quantity, setQuantity] = useState("");
-  const [purchasePrice, setPurchasePrice] = useState("");
+  const [newPurchasePrice, setNewPurchasePrice] = useState("");
+  const [newSellingPrice, setNewSellingPrice] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [note, setNote] = useState("");
@@ -31,10 +32,29 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
     getSuppliers().then(setSuppliers).catch(console.error);
   }, []);
 
+  const selectedProduct = products.find(p => p.id === productId) ?? null;
+
+  useEffect(() => {
+    setSupplierId(selectedProduct?.supplierId || "");
+  }, [productId]);
+
+  const effectivePurchasePrice = newPurchasePrice ? Number(newPurchasePrice) : (selectedProduct?.purchasePrice ?? 0);
+  const effectiveSellingPrice = newSellingPrice ? Number(newSellingPrice) : (selectedProduct?.basePrice ?? 0);
+  const isPriceBelowCost =
+    type === 'IN' &&
+    (newPurchasePrice || newSellingPrice) &&
+    effectiveSellingPrice > 0 &&
+    effectivePurchasePrice > 0 &&
+    effectiveSellingPrice < effectivePurchasePrice;
+
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!productId || !quantity || Number(quantity) <= 0) {
       toast.error("Valid product and quantity are required");
+      return;
+    }
+    if (isPriceBelowCost) {
+      toast.error("Selling price cannot be lower than purchase price");
       return;
     }
 
@@ -46,22 +66,25 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
       const entryNote = note.trim() ||
         (type === 'IN' ? `Stock received${invoiceNumber ? ` — Bill: ${invoiceNumber}` : ''}` : 'Manual removal');
 
-      await addStockEntry({
-        productId,
-        productName: product.name,
-        categoryName: product.categoryName,
-        unitName: product.unitName,
-        type,
-        quantity: Number(quantity),
-        purchasePrice: purchasePrice ? Number(purchasePrice) : undefined,
-        supplierId: supplierId || undefined,
-        invoiceNumber: invoiceNumber.trim() || undefined,
-        note: entryNote,
-        date: new Date()
-      });
+      await addStockEntry(
+        {
+          productId,
+          productName: product.name,
+          categoryName: product.categoryName,
+          unitName: product.unitName,
+          type,
+          quantity: Number(quantity),
+          purchasePrice: newPurchasePrice ? Number(newPurchasePrice) : 0,
+          supplierId: supplierId || undefined,
+          invoiceNumber: invoiceNumber.trim() || undefined,
+          note: entryNote,
+          date: new Date()
+        },
+        newSellingPrice ? Number(newSellingPrice) : undefined
+      );
 
       toast.success("Stock entry added");
-      setProductId(""); setQuantity(""); setPurchasePrice("");
+      setProductId(""); setQuantity(""); setNewPurchasePrice(""); setNewSellingPrice("");
       setSupplierId(""); setInvoiceNumber(""); setNote("");
       setShowManualForm(false);
       onNewEntry();
@@ -130,17 +153,53 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
 
             {type === 'IN' && (
               <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price per Unit (₹)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={purchasePrice}
-                    onChange={e => setPurchasePrice(e.target.value)}
-                    placeholder="Optional"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                {/* Current prices info card */}
+                {selectedProduct && (
+                  <div className="md:col-span-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">Current Prices — {selectedProduct.name}</p>
+                    <div className="flex gap-6 text-sm">
+                      <span className="text-gray-700">Purchase Price: <span className="font-bold text-gray-900">₹{(selectedProduct.purchasePrice ?? 0).toFixed(2)}</span></span>
+                      <span className="text-gray-700">Selling Price (excl. GST): <span className="font-bold text-gray-900">₹{selectedProduct.basePrice.toFixed(2)}</span></span>
+                      <span className="text-gray-500">GST: <span className="font-medium">{selectedProduct.gstPercentage}%</span></span>
+                    </div>
+                  </div>
+                )}
+
+                {/* New price fields */}
+                <div className="md:col-span-2">
+                  <p className="text-sm font-semibold text-gray-700 mb-3">Update Prices <span className="font-normal text-gray-400">(optional — leave blank to keep current)</span></p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">New Purchase Price per Unit (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={newPurchasePrice}
+                        onChange={e => setNewPurchasePrice(e.target.value)}
+                        placeholder={selectedProduct ? `Current: ₹${(selectedProduct.purchasePrice ?? 0).toFixed(2)}` : "Optional"}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">New Selling Price per Unit — Excl. GST (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={newSellingPrice}
+                        onChange={e => setNewSellingPrice(e.target.value)}
+                        placeholder={selectedProduct ? `Current: ₹${selectedProduct.basePrice.toFixed(2)}` : "Optional"}
+                        className={`w-full border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 ${isPriceBelowCost ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
+                      />
+                    </div>
+                  </div>
+
+                  {isPriceBelowCost && (
+                    <div className="mt-2 bg-red-50 border border-red-300 text-red-700 text-sm px-3 py-2 rounded-lg">
+                      <span className="font-semibold">⚠ Warning:</span> Selling price (₹{effectiveSellingPrice.toFixed(2)}) is lower than purchase price (₹{effectivePurchasePrice.toFixed(2)}). You will be selling at a loss.
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -153,6 +212,18 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
                     <option value="">-- No Supplier --</option>
                     {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
+                  {selectedProduct?.supplierId && supplierId === selectedProduct.supplierId && (
+                    <p className="text-xs text-indigo-600 mt-1">Current supplier for this product</p>
+                  )}
+                  {selectedProduct?.supplierId && supplierId !== selectedProduct.supplierId && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Default: {selectedProduct.supplierName || 'Unknown'} —{' '}
+                      <button type="button" className="underline" onClick={() => setSupplierId(selectedProduct.supplierId!)}>restore</button>
+                    </p>
+                  )}
+                  {!selectedProduct?.supplierId && (
+                    <p className="text-xs text-gray-400 mt-1">No supplier linked to this product</p>
+                  )}
                 </div>
 
                 <div>
@@ -182,7 +253,7 @@ export function EntryReport({ entries, products, onNewEntry }: EntryReportProps)
             <div className="md:col-span-2 flex justify-end mt-2">
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !!isPriceBelowCost}
                 className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
                 {loading ? "Saving..." : "Submit Entry"}

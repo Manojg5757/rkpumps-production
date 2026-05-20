@@ -91,7 +91,7 @@ export const addPayment = async (data: Omit<Payment, 'id' | 'createdAt'>): Promi
     // THEN WRITES
     const saleData = saleDoc.data() as Sale;
     // Use finalTotal for new invoices; fall back to grandTotal for legacy records
-    const baseTotal = saleData.finalTotal ?? Math.round(saleData.grandTotal);
+    const baseTotal = saleData.finalTotal ?? Math.floor(saleData.grandTotal);
     const newPaidAmount = (saleData.paidAmount || 0) + data.amount;
     const newPendingAmount = baseTotal - newPaidAmount;
     let status: 'paid' | 'partial' | 'unpaid' = 'partial';
@@ -329,8 +329,8 @@ export const completeSale = async (
     const totalTaxableAmount = cart.reduce((sum, item) => sum + item.lineTaxableAmount, 0);
     const totalGSTAmount = cart.reduce((sum, item) => sum + item.lineGSTAmount, 0);
     const grandTotal = totalTaxableAmount + totalGSTAmount;      // raw, full precision
-    const finalTotal = Math.round(grandTotal);                   // what customer actually pays
-    const roundOff = finalTotal - grandTotal;                    // positive = rounded up, negative = rounded down
+    const finalTotal = Math.floor(grandTotal);                   // what customer actually pays (always round down)
+    const roundOff = finalTotal - grandTotal;                    // always negative (floor truncates)
 
     const pendingAmount = finalTotal - paidAmount;
     let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'partial';
@@ -409,15 +409,15 @@ export const getStockEntries = async (filters?: { productId?: string; type?: 'IN
   return results;
 };
 
-export const addStockEntry = async (entry: Omit<StockEntry, 'id'>): Promise<StockEntry> => {
+export const addStockEntry = async (entry: Omit<StockEntry, 'id'>, newBasePrice?: number): Promise<StockEntry> => {
   return await runTransaction(db, async (transaction) => {
     const productRef = doc(db, 'products', entry.productId);
     const pDoc = await transaction.get(productRef);
     if (!pDoc.exists()) throw new Error('Product not found');
-    
+
     const pData = pDoc.data() as Product;
     let newStock = pData.stockQuantity;
-    
+
     if (entry.type === 'IN') {
       newStock += entry.quantity;
     } else {
@@ -425,10 +425,19 @@ export const addStockEntry = async (entry: Omit<StockEntry, 'id'>): Promise<Stoc
       if (newStock < 0) throw new Error('Stock cannot go below 0');
     }
 
-    transaction.update(productRef, { stockQuantity: newStock, updatedAt: Timestamp.now() });
+    const productUpdate: Record<string, unknown> = { stockQuantity: newStock, updatedAt: Timestamp.now() };
+    if (entry.type === 'IN' && entry.purchasePrice && entry.purchasePrice > 0) {
+      productUpdate.purchasePrice = entry.purchasePrice;
+    }
+    if (entry.type === 'IN' && newBasePrice && newBasePrice > 0) {
+      productUpdate.basePrice = newBasePrice;
+    }
+    transaction.update(productRef, productUpdate);
 
     const entryRef = doc(collection(db, 'stockEntries'));
-    const entryData = { ...entry, date: Timestamp.now() };
+    const entryData = Object.fromEntries(
+      Object.entries({ ...entry, date: Timestamp.now() }).filter(([, v]) => v !== undefined)
+    );
     transaction.set(entryRef, entryData);
 
     return { id: entryRef.id, ...entry } as StockEntry;

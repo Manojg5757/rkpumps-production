@@ -4,7 +4,9 @@
       "Bash(npx tsc *)",
       "Bash(npx next *)",
       "Bash(node -e \"const fs=require\\('fs'\\); const b64=fs.readFileSync\\('./node_modules/jspdf/dist/jspdf.es.min.js','utf8'\\).slice\\(0,200\\); console.log\\(b64\\);\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\user\\\\OneDrive\\\\Desktop\\\\rkpumps\\\\motor-pos\" -Force)",
+      "Bash(Select-Object Name, FullName)"
     ]
   }
 }

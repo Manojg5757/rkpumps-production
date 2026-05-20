@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { PageWrapper } from "../components/layout/PageWrapper";
+import { AuthProvider } from "../lib/authContext";
 import { Toaster } from "react-hot-toast";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -22,10 +23,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <PageWrapper>
-          {children}
-        </PageWrapper>
-        <Toaster position="bottom-right" />
+        <AuthProvider>
+          <PageWrapper>
+            {children}
+          </PageWrapper>
+          <Toaster position="bottom-right" />
+        </AuthProvider>
       </body>
     </html>
   );

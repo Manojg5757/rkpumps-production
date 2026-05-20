@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, Receipt, History, BarChart2, Users, Truck, X } from 'lucide-react';
+import { LayoutDashboard, Package, Receipt, History, BarChart2, Users, Truck, X, LogOut } from 'lucide-react';
 import { BUSINESS_INFO } from '../../lib/config';
+import { useAuth } from '../../lib/authContext';
 
 const navItems = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
@@ -23,6 +24,7 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen = false, setIsOpen }: SidebarProps) {
   const pathname = usePathname();
+  const { logout, user } = useAuth();
 
   return (
     <>
@@ -54,6 +56,7 @@ export function Sidebar({ isOpen = false, setIsOpen }: SidebarProps) {
             <X size={24} />
           </button>
         </div>
+
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
@@ -73,8 +76,19 @@ export function Sidebar({ isOpen = false, setIsOpen }: SidebarProps) {
             );
           })}
         </nav>
-        <div className="p-4 border-t border-gray-800 text-xs text-gray-500 text-center">
-          R.K Pumps & Motors POS
+
+        <div className="p-3 border-t border-gray-800">
+          {user && (
+            <p className="text-xs text-gray-500 px-3 pb-2 truncate">{user.email}</p>
+          )}
+          <button
+            onClick={logout}
+            className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white text-sm transition-colors"
+          >
+            <LogOut size={18} />
+            <span>Logout</span>
+          </button>
+          <p className="text-xs text-gray-600 text-center mt-3">R.K Pumps &amp; Motors POS</p>
         </div>
       </div>
     </>

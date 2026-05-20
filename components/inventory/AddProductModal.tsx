@@ -53,10 +53,16 @@ export function AddProductModal({ categories, units, onClose, onAdded }: AddProd
     }
   };
 
+  const isPriceBelowCost = Number(basePrice) > 0 && Number(purchasePrice) > 0 && Number(basePrice) < Number(purchasePrice);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !categoryId || !unitId) {
       toast.error("Please fill all required fields");
+      return;
+    }
+    if (isPriceBelowCost) {
+      toast.error("Selling price cannot be lower than purchase price");
       return;
     }
     
@@ -173,8 +179,13 @@ export function AddProductModal({ categories, units, onClose, onAdded }: AddProd
               </div>
             </div>
 
-            <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 flex justify-between items-center">
-              <span className="text-sm font-medium text-gray-600">Profit Margin: <span className="text-green-600">₹{(Number(basePrice) - Number(purchasePrice)).toFixed(2)}</span></span>
+            {isPriceBelowCost && (
+              <div className="bg-red-50 border border-red-300 text-red-700 text-sm px-3 py-2 rounded-lg flex items-center gap-2">
+                <span className="font-semibold">⚠ Warning:</span> Selling price is lower than purchase price. You will be selling at a loss.
+              </div>
+            )}
+            <div className={`p-3 rounded-lg border flex justify-between items-center ${isPriceBelowCost ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+              <span className="text-sm font-medium text-gray-600">Profit Margin: <span className={isPriceBelowCost ? 'text-red-600 font-bold' : 'text-green-600'}>₹{(Number(basePrice) - Number(purchasePrice)).toFixed(2)}</span></span>
               <p className="text-sm text-gray-500">Final Selling Price (Incl. GST): <span className="font-bold text-indigo-600 text-lg">₹{finalPrice.toFixed(2)}</span></p>
             </div>
 
@@ -201,7 +212,7 @@ export function AddProductModal({ categories, units, onClose, onAdded }: AddProd
 
           <div className="pt-4 flex justify-end gap-3 border-t border-gray-100 mt-6">
             <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-            <button type="submit" disabled={loading} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+            <button type="submit" disabled={loading || isPriceBelowCost} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">
               {loading ? "Saving..." : "Add Product"}
             </button>
           </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ProductSearch } from "../../components/billing/ProductSearch";
 import { CartPanel } from "../../components/billing/CartPanel";
 import { BillSummary } from "../../components/billing/BillSummary";
@@ -10,6 +11,7 @@ import { Product, Category, CartItem, Customer } from "../../types";
 import toast from "react-hot-toast";
 
 export default function BillingPage() {
+  const router = useRouter();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -138,7 +140,7 @@ export default function BillingPage() {
   };
 
   const grandTotal = cart.reduce((sum, item) => sum + item.lineTaxableAmount + item.lineGSTAmount, 0);
-  const finalTotal = Math.round(grandTotal);
+  const finalTotal = Math.floor(grandTotal);
   const roundOff = finalTotal - grandTotal;
 
   const handleCompleteSale = async () => {
@@ -200,11 +202,8 @@ export default function BillingPage() {
       a.click();
       document.body.removeChild(a);
       
-      window.open(url, '_blank');
-      
       toast.success(`Sale complete — ${sale.billNumber}`);
-      resetFormSilently();
-      loadData();
+      router.push('/');
     } catch (error: any) {
       toast.error(error.message || "Failed to complete sale");
     } finally {
@@ -271,19 +270,19 @@ export default function BillingPage() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
             />
 
-            <input 
-              type="text" 
-              placeholder="GSTIN (Optional)" 
-              value={customerGstin}
-              onChange={e => setCustomerGstin(e.target.value.toUpperCase())}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm uppercase"
-            />
-            <input 
-              type="text" 
-              placeholder="Address (Optional)" 
+            <input
+              type="text"
+              placeholder="Address (Optional)"
               value={customerAddress}
               onChange={e => setCustomerAddress(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+            />
+            <input
+              type="text"
+              placeholder="GSTIN (Optional)"
+              value={customerGstin}
+              onChange={e => setCustomerGstin(e.target.value.toUpperCase())}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm uppercase"
             />
           </div>
         </div>
