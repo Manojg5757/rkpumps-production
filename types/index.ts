@@ -114,3 +114,26 @@ export type Expense = {
   note?: string;
   createdAt: Date;
 };
+
+export type QuotationItem = {
+  productId: string;
+  name: string;
+  unitName: string;
+  quantity: number;
+  unitPrice: number;  // basePrice * (1 + gstPercentage/100) — GST baked in, never shown separately
+  lineTotal: number;  // unitPrice * quantity
+};
+
+export type Quotation = {
+  id: string;
+  quotationNumber: string;
+  date: Date;
+  customer: {
+    name: string;
+    phone?: string;
+    address?: string;
+  };
+  items: QuotationItem[];
+  grandTotal: number;
+  validDays: number;
+};

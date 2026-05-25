@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Package, Receipt, History, BarChart2, Users, Truck, X, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, Receipt, History, BarChart2, Users, Truck, X, LogOut, FileText } from 'lucide-react';
 import { BUSINESS_INFO } from '../../lib/config';
 import { useAuth } from '../../lib/authContext';
 
@@ -10,6 +10,7 @@ const navItems = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Inventory', href: '/inventory', icon: Package },
   { name: 'New Invoice', href: '/billing', icon: Receipt },
+  { name: 'Quotation', href: '/quotation', icon: FileText },
   { name: 'Sales History', href: '/sales', icon: History },
   { name: 'Customers', href: '/customers', icon: Users },
   { name: 'Suppliers', href: '/suppliers', icon: Truck },

@@ -15,7 +15,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { Supplier, Customer, Payment, Expense, Unit, Category, Product, Sale, StockEntry, CartItem } from '../types';
+import { Supplier, Customer, Payment, Expense, Unit, Category, Product, Sale, StockEntry, CartItem, Quotation, QuotationItem } from '../types';
 
 // --- Suppliers ---
 export const getSuppliers = async (): Promise<Supplier[]> => {
@@ -452,6 +452,55 @@ export const getNextInvoiceNumber = async (): Promise<string> => {
   const nextInvoiceNumber = lastInvoiceNumber + 1;
   const year = new Date().getFullYear();
   return `INV-${year}-${nextInvoiceNumber.toString().padStart(4, '0')}`;
+};
+
+// --- Quotations ---
+export const saveQuotation = async (
+  items: QuotationItem[],
+  customer: { name: string; phone?: string; address?: string },
+  validDays: number
+): Promise<Quotation> => {
+  return await runTransaction(db, async (transaction) => {
+    const counterRef = doc(db, 'meta', 'counters');
+    const counterDoc = await transaction.get(counterRef);
+    const lastNum = counterDoc.exists() ? (counterDoc.data().lastQuotationNumber || 0) : 0;
+    const nextNum = lastNum + 1;
+    const year = new Date().getFullYear();
+    const quotationNumber = `QT-${year}-${nextNum.toString().padStart(4, '0')}`;
+
+    transaction.set(counterRef, { lastQuotationNumber: nextNum }, { merge: true });
+
+    const grandTotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+    const quotRef = doc(collection(db, 'quotations'));
+
+    const data = {
+      quotationNumber,
+      date: Timestamp.now(),
+      customer,
+      items,
+      grandTotal,
+      validDays,
+    };
+
+    transaction.set(quotRef, data);
+    return { id: quotRef.id, ...data, date: new Date() } as Quotation;
+  });
+};
+
+export const getQuotations = async (): Promise<Quotation[]> => {
+  const q = query(collection(db, 'quotations'), orderBy('date', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => {
+    const data = d.data();
+    return { ...data, id: d.id, date: data.date?.toDate() } as Quotation;
+  });
+};
+
+export const getQuotationById = async (id: string): Promise<Quotation> => {
+  const d = await getDoc(doc(db, 'quotations', id));
+  if (!d.exists()) throw new Error('Quotation not found');
+  const data = d.data();
+  return { ...data, id: d.id, date: data.date?.toDate() } as Quotation;
 };
 
 // --- Seeding ---
