@@ -473,10 +473,15 @@ export const saveQuotation = async (
     const grandTotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
     const quotRef = doc(collection(db, 'quotations'));
 
+    // Strip undefined fields — Firestore rejects undefined values
+    const cleanCustomer: { name: string; phone?: string; address?: string } = { name: customer.name };
+    if (customer.phone) cleanCustomer.phone = customer.phone;
+    if (customer.address) cleanCustomer.address = customer.address;
+
     const data = {
       quotationNumber,
       date: Timestamp.now(),
-      customer,
+      customer: cleanCustomer,
       items,
       grandTotal,
       validDays,
