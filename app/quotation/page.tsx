@@ -84,7 +84,7 @@ export default function QuotationPage() {
     setPdfBlob(null);
   };
 
-  const grandTotal = items.reduce((sum, i) => sum + i.lineTotal, 0);
+  const grandTotal = Math.floor(items.reduce((sum, i) => sum + i.lineTotal, 0));
 
   const canGenerate = customerName.trim().length > 0 && items.length > 0;
 

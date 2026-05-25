@@ -470,7 +470,7 @@ export const saveQuotation = async (
 
     transaction.set(counterRef, { lastQuotationNumber: nextNum }, { merge: true });
 
-    const grandTotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
+    const grandTotal = Math.floor(items.reduce((sum, item) => sum + item.lineTotal, 0));
     const quotRef = doc(collection(db, 'quotations'));
 
     // Strip undefined fields — Firestore rejects undefined values
