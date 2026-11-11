@@ -10,7 +10,7 @@ describe('Utility Functions', () => {
 
   describe('numberToWords', () => {
     it('converts numbers to Indian currency words', () => {
-      expect(numberToWords(105)).toBe('Rupees One Hundred Five Only');
+      expect(numberToWords(105)).toBe('Rupees One Hundred and Five Only');
       expect(numberToWords(1500)).toBe('Rupees One Thousand Five Hundred Only');
       expect(numberToWords(100000)).toBe('Rupees One Lakh Only');
     });

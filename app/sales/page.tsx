@@ -1,203 +1,152 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { searchSales } from "../../lib/db";
-import { generateBillPDF } from "../../lib/pdf";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import toast from "react-hot-toast";
+import { Download, Plus, ScrollText } from "lucide-react";
+import { getSales } from "../../lib/db";
 import { Sale } from "../../types";
 import { SalesTable } from "../../components/sales/SalesTable";
 import { AddPaymentModal } from "../../components/sales/AddPaymentModal";
-import { Search, Download } from "lucide-react";
+import { InvoiceDetailModal } from "../../components/sales/InvoiceDetailModal";
+import { EmptyState, Loading, PageHeader, SearchInput, Stat, inr } from "../../components/ui/Common";
+import { daysSince, saleTotal } from "../../lib/gst";
+import { RANGE_LABELS, RangeKey, downloadCsv, inRange, rangeBounds } from "../../lib/dates";
+import { formatDate } from "../../lib/utils";
+
+type StatusFilter = "all" | "due" | "overdue" | "paid";
 
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
-  const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
+  const [search, setSearch] = useState("");
+  const [range, setRange] = useState<RangeKey>("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [viewing, setViewing] = useState<Sale | null>(null);
+  const [paying, setPaying] = useState<Sale | null>(null);
 
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const load = async () => {
+    try {
+      setSales(await getSales());
+    } catch {
+      toast.error("Could not load invoices");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    loadData();
+    const p = new URLSearchParams(window.location.search);
+    const f = p.get("status");
+    if (f === "due" || f === "overdue" || f === "paid") setStatus(f);
+    load();
   }, []);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const data = await searchSales({});
-      setSales(data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
+  const filtered = useMemo(() => {
+    const bounds = rangeBounds(range, from, to);
+    const term = search.trim().toLowerCase();
+    return sales.filter(s => {
+      if (!inRange(s.date, bounds)) return false;
+      const pending = s.pendingAmount || 0;
+      if (status === "due" && pending <= 0) return false;
+      if (status === "paid" && pending > 0) return false;
+      if (status === "overdue" && !(pending > 0 && daysSince(s.date) > 30)) return false;
+      if (!term) return true;
+      return (
+        s.customer.name.toLowerCase().includes(term) ||
+        s.billNumber.toLowerCase().includes(term) ||
+        (s.customer.phone || "").includes(term) ||
+        (s.customer.gstin || "").toLowerCase().includes(term) ||
+        s.items.some(i => i.name.toLowerCase().includes(term))
+      );
+    });
+  }, [sales, search, range, from, to, status]);
+
+  const totalSales = filtered.reduce((sum, s) => sum + saleTotal(s), 0);
+  const totalGST = filtered.reduce((sum, s) => sum + s.totalGSTAmount, 0);
+  const totalPending = filtered.reduce((sum, s) => sum + (s.pendingAmount || 0), 0);
+
+  const exportCsv = () => {
+    if (!filtered.length) return toast.error("No invoices to export");
+    downloadCsv(
+      `Sales_${RANGE_LABELS[range].replace(/\s/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`,
+      ["Date", "Bill Number", "Customer Name", "Customer Phone", "GSTIN", "Place of Supply", "Taxable Amount", "CGST", "SGST", "IGST", "GST Amount", "Round Off", "Invoice Total", "Paid Amount", "Pending Amount", "Payment Status"],
+      filtered.map(s => [
+        formatDate(new Date(s.date)), s.billNumber, s.customer.name, s.customer.phone || "", s.customer.gstin || "", s.placeOfSupply || "",
+        s.totalTaxableAmount.toFixed(2),
+        (s.isInterState ? 0 : s.totalGSTAmount / 2).toFixed(2),
+        (s.isInterState ? 0 : s.totalGSTAmount / 2).toFixed(2),
+        (s.isInterState ? s.totalGSTAmount : 0).toFixed(2),
+        s.totalGSTAmount.toFixed(2), (s.roundOff ?? 0).toFixed(2), saleTotal(s).toFixed(2),
+        (s.paidAmount || 0).toFixed(2), (s.pendingAmount || 0).toFixed(2), s.paymentStatus || "paid",
+      ])
+    );
   };
-
-  const handleSearch = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setLoading(true);
-    try {
-      const allData = await searchSales({});
-      const term = searchTerm.toLowerCase();
-
-      const filtered = allData.filter(s => {
-        const matchesSearch =
-          s.customer.name.toLowerCase().includes(term) ||
-          s.billNumber.toLowerCase().includes(term) ||
-          (s.customer.gstin && s.customer.gstin.toLowerCase().includes(term)) ||
-          (s.customer.phone && s.customer.phone.includes(term));
-
-        let matchesDate = true;
-        const saleDate = new Date(s.date);
-        saleDate.setHours(0, 0, 0, 0);
-
-        if (startDate) {
-          const [sy, sm, sd] = startDate.split('-').map(Number);
-          const start = new Date(sy, sm - 1, sd);
-          start.setHours(0, 0, 0, 0);
-          if (saleDate < start) matchesDate = false;
-        }
-        if (endDate) {
-          const [ey, em, ed] = endDate.split('-').map(Number);
-          const end = new Date(ey, em - 1, ed);
-          end.setHours(23, 59, 59, 999);
-          if (saleDate > end) matchesDate = false;
-        }
-
-        return matchesSearch && matchesDate;
-      });
-
-      setSales(filtered);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleExportBulk = () => {
-    if (sales.length === 0) return;
-    const headers = ["Date", "Bill Number", "Customer Name", "Customer Phone", "GSTIN", "Taxable Amount", "GST Amount", "Grand Total", "Paid Amount", "Pending Amount", "Payment Status"];
-    const rows = sales.map(s => [
-      new Date(s.date).toLocaleDateString(),
-      s.billNumber,
-      `"${s.customer.name}"`,
-      s.customer.phone || "",
-      s.customer.gstin || "",
-      s.totalTaxableAmount.toFixed(2),
-      s.totalGSTAmount.toFixed(2),
-      s.grandTotal.toFixed(2),
-      (s.paidAmount || 0).toFixed(2),
-      (s.pendingAmount || 0).toFixed(2),
-      s.paymentStatus || 'paid'
-    ]);
-
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `Sales_Report_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const handleDownload = async (sale: Sale) => {
-    const pdfBlob = await generateBillPDF(sale);
-    const url = URL.createObjectURL(pdfBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeName = sale.customer.name.replace(/[^a-zA-Z0-9]/g, '_');
-    a.download = `${safeName}_${sale.billNumber}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const handlePrint = async (sale: Sale) => {
-    const pdfBlob = await generateBillPDF(sale);
-    const url = URL.createObjectURL(pdfBlob);
-    window.open(url, '_blank');
-  };
-
-  const totalRevenue = sales.reduce((sum, s) => sum + s.grandTotal, 0);
-  const totalGST = sales.reduce((sum, s) => sum + s.totalGSTAmount, 0);
-  const totalPending = sales.reduce((sum, s) => sum + (s.pendingAmount || 0), 0);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Sales History</h1>
+    <div>
+      <PageHeader
+        title="Sales History"
+        subtitle={`${sales.length} invoices`}
+        actions={
+          <>
+            <button onClick={exportCsv} className="btn-secondary px-3" title="Export CSV"><Download size={18} /><span className="hidden sm:inline">Export</span></button>
+            <Link href="/billing" className="btn-primary hidden md:inline-flex"><Plus size={18} /> New invoice</Link>
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
-          <p className="text-sm text-indigo-800 font-medium">Total Revenue</p>
-          <p className="text-2xl font-bold text-indigo-900">₹{totalRevenue.toLocaleString('en-IN')}</p>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-          <p className="text-sm text-gray-600 font-medium">Total GST Collected</p>
-          <p className="text-2xl font-bold text-gray-900">₹{totalGST.toLocaleString('en-IN')}</p>
-        </div>
-        <div className="bg-amber-50 border border-amber-100 p-4 rounded-xl">
-          <p className="text-sm text-amber-800 font-medium">Total Pending</p>
-          <p className="text-2xl font-bold text-amber-900">₹{totalPending.toLocaleString('en-IN')}</p>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-          <p className="text-sm text-gray-600 font-medium">Number of Invoices</p>
-          <p className="text-2xl font-bold text-gray-900">{sales.length}</p>
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <Stat label="Sales" value={inr(totalSales)} sub={`${filtered.length} invoices`} />
+        <Stat label="GST collected" value={inr(totalGST)} />
+        <Stat label="Balance due" value={inr(totalPending)} tone={totalPending > 0 ? "warn" : "default"} />
+        <Stat label="Received" value={inr(totalSales - totalPending)} tone="good" />
       </div>
 
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-4">
-        <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
-          <input
-            type="text"
-            placeholder="Search by Bill No, Customer Name, Phone, or GSTIN..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <input
-            type="date"
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-            title="Start Date"
-          />
-          <input
-            type="date"
-            value={endDate}
-            onChange={e => setEndDate(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-            title="End Date"
-          />
-          <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2 justify-center">
-            <Search size={18} /> Search
-          </button>
-          <button
-            type="button"
-            onClick={handleExportBulk}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 justify-center"
-          >
-            <Download size={18} /> Export CSV
-          </button>
-        </form>
+      <div className="space-y-2.5 mb-4">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search customer, phone, bill no., item" />
+        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          {(["all", "due", "overdue", "paid"] as StatusFilter[]).map(s => (
+            <button key={s} onClick={() => setStatus(s)} className={status === s ? "chip-active" : "chip"}>
+              {s === "all" ? "All" : s === "due" ? "Balance due" : s === "overdue" ? "Overdue 30d+" : "Paid"}
+            </button>
+          ))}
+          <span className="w-px bg-line mx-1 shrink-0" />
+          {(["all", "today", "week", "month", "lastMonth", "fy", "custom"] as RangeKey[]).map(r => (
+            <button key={r} onClick={() => setRange(r)} className={range === r ? "chip-active" : "chip"}>{RANGE_LABELS[r]}</button>
+          ))}
+        </div>
+        {range === "custom" && (
+          <div className="grid grid-cols-2 gap-2 max-w-md">
+            <div><label className="label">From</label><input type="date" className="input" value={from} onChange={e => setFrom(e.target.value)} /></div>
+            <div><label className="label">To</label><input type="date" className="input" value={to} onChange={e => setTo(e.target.value)} /></div>
+          </div>
+        )}
       </div>
 
       {loading ? (
-        <div className="text-center py-10">Loading sales history...</div>
+        <Loading text="Loading invoices…" />
+      ) : filtered.length === 0 ? (
+        <div className="card">
+          <EmptyState icon={ScrollText} title="No invoices found" text={sales.length ? "Try a different search or date range." : "Your saved invoices will appear here."}
+            action={!sales.length ? <Link href="/billing" className="btn-primary"><Plus size={18} /> Create first invoice</Link> : undefined} />
+        </div>
       ) : (
-        <SalesTable
-          sales={sales}
-          onDownload={handleDownload}
-          onPrint={handlePrint}
-          onAddPayment={setPaymentSale}
-        />
+        <SalesTable sales={filtered} onOpen={setViewing} onAddPayment={setPaying} />
       )}
 
-      {paymentSale && (
+      {viewing && <InvoiceDetailModal sale={viewing} onClose={() => setViewing(null)} onAddPayment={s => { setPaying(s); }} />}
+      {paying && (
         <AddPaymentModal
-          sale={paymentSale}
-          onClose={() => setPaymentSale(null)}
-          onPaymentAdded={() => { setPaymentSale(null); loadData(); }}
+          sale={paying}
+          onClose={() => setPaying(null)}
+          onPaymentAdded={async () => {
+            setPaying(null);
+            setViewing(null);
+            await load();
+          }}
         />
       )}
     </div>

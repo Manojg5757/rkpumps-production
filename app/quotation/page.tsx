@@ -1,333 +1,482 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getProducts, getCategories, saveQuotation } from "../../lib/db";
-import { generateQuotationPDF } from "../../lib/quotationPdf";
-import { Product, Category, QuotationItem, Quotation } from "../../types";
-import { QuotationProductSearch } from "../../components/quotation/QuotationProductSearch";
-import { QuotationCartPanel } from "../../components/quotation/QuotationCartPanel";
-import { Download, Share2, FileText, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { CheckCircle2, Copy, Download, FileText, Plus, Printer, Receipt, Share2, Trash2, Wrench, Package, ChevronRight } from "lucide-react";
+import { getProducts, getCategories, saveQuotation, getQuotations, getCustomers, deleteQuotation } from "../../lib/db";
+import { generateQuotationPDF } from "../../lib/quotationPdf";
+import { downloadBlob, openBlob, quotationMessage, safeFileName, sharePdf } from "../../lib/share";
+import { round2, round3 } from "../../lib/gst";
+import { formatDate } from "../../lib/utils";
+import { Product, Category, QuotationItem, Quotation, Customer } from "../../types";
+import { ProductPicker } from "../../components/billing/ProductPicker";
+import { ServiceItemModal } from "../../components/billing/ServiceItemModal";
+import { CustomerFields, CustomerForm, emptyCustomer } from "../../components/billing/CustomerFields";
+import { TotalBar } from "../../components/billing/TotalBar";
+import { Modal } from "../../components/ui/Modal";
+import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { EmptyState, inr, inr2, Loading, SearchInput, Segmented } from "../../components/ui/Common";
+
+const DRAFT_KEY = "rk_quote_draft_v2";
+type Tab = "new" | "saved";
 
 export default function QuotationPage() {
+  const router = useRouter();
+  const [tab, setTab] = useState<Tab>("new");
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+
   const [items, setItems] = useState<QuotationItem[]>([]);
-
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerAddress, setCustomerAddress] = useState("");
+  const [customer, setCustomer] = useState<CustomerForm>(emptyCustomer);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [validDays, setValidDays] = useState(7);
+  const [notes, setNotes] = useState("");
 
-  const [loading, setLoading] = useState(false);
-  const [generatedQuotation, setGeneratedQuotation] = useState<Quotation | null>(null);
-  const [pdfBlob, setPdfBlob] = useState<Blob | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [serviceOpen, setServiceOpen] = useState(false);
+  const [editing, setEditing] = useState<QuotationItem | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState<{ q: Quotation; blob: Blob } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    loadData();
+    if (new URLSearchParams(window.location.search).get("tab") === "saved") setTab("saved");
+    Promise.all([getProducts(), getCategories(), getCustomers()])
+      .then(([p, c, cu]) => { setProducts(p); setCategories(c); setCustomers(cu); })
+      .catch(() => toast.error("Could not load products. Check your internet connection."));
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d.items?.length || d.customer?.name) {
+          setItems(d.items || []); setCustomer(d.customer || emptyCustomer); setValidDays(d.validDays || 7); setNotes(d.notes || "");
+          toast("Unsaved quotation restored", { icon: "↩️" });
+        }
+      }
+    } catch { /* ignore */ }
+    setReady(true);
   }, []);
 
-  const loadData = async () => {
+  useEffect(() => {
+    if (!ready || done) return;
     try {
-      const [p, c] = await Promise.all([getProducts(), getCategories()]);
-      setProducts(p);
-      setCategories(c);
-    } catch {
-      toast.error("Failed to load products");
-    }
-  };
+      if (items.length || customer.name) localStorage.setItem(DRAFT_KEY, JSON.stringify({ items, customer, validDays, notes }));
+      else localStorage.removeItem(DRAFT_KEY);
+    } catch { /* ignore */ }
+  }, [items, customer, validDays, notes, ready, done]);
 
-  const handleAddProduct = (product: Product) => {
+  const inCart = useMemo(() => Object.fromEntries(items.map(i => [i.productId, i.quantity])), [items]);
+  const total = Math.floor(round2(items.reduce((s, i) => s + i.lineTotal, 0)));
+
+  const addProduct = (p: Product) => {
     setItems(prev => {
-      if (prev.find(i => i.productId === product.id)) {
-        toast.error("Already added");
-        return prev;
-      }
-      const unitPrice = product.basePrice * (1 + product.gstPercentage / 100);
-      return [...prev, {
-        productId: product.id,
-        name: product.name,
-        unitName: product.unitName,
-        quantity: 1,
-        unitPrice,
-        lineTotal: unitPrice,
-      }];
+      const ex = prev.find(i => i.productId === p.id);
+      if (ex) return prev.map(i => (i.productId === p.id ? { ...i, quantity: round3(i.quantity + 1), lineTotal: round2(i.unitPrice * round3(i.quantity + 1)) } : i));
+      const unitPrice = round2(p.basePrice * (1 + p.gstPercentage / 100));
+      return [...prev, { productId: p.id, name: p.name, unitName: p.unitName, quantity: 1, unitPrice, lineTotal: unitPrice, gstPercentage: p.gstPercentage, isService: p.isService || undefined }];
     });
   };
 
-  const handleSetQuantity = (productId: string, qty: number) => {
-    if (isNaN(qty) || qty < 1) qty = 1;
-    setItems(prev => prev.map(item =>
-      item.productId === productId
-        ? { ...item, quantity: qty, lineTotal: item.unitPrice * qty }
-        : item
-    ));
-    // Clear generated quotation if items change after generation
-    setGeneratedQuotation(null);
-    setPdfBlob(null);
+  const stepQty = (item: QuotationItem, delta: number) => {
+    const q = round3(item.quantity + delta);
+    if (q <= 0) return setItems(prev => prev.filter(i => i.productId !== item.productId));
+    setItems(prev => prev.map(i => (i.productId === item.productId ? { ...i, quantity: q, lineTotal: round2(i.unitPrice * q) } : i)));
   };
 
-  const handleRemove = (productId: string) => {
-    setItems(prev => prev.filter(i => i.productId !== productId));
-    setGeneratedQuotation(null);
-    setPdfBlob(null);
+  const resetAll = () => {
+    setItems([]); setCustomer(emptyCustomer); setSelectedCustomerId(null); setValidDays(7); setNotes("");
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
   };
 
-  const handleClear = () => {
-    if (!confirm("Clear all items and customer details?")) return;
-    setItems([]);
-    setCustomerName("");
-    setCustomerPhone("");
-    setCustomerAddress("");
-    setValidDays(7);
-    setGeneratedQuotation(null);
-    setPdfBlob(null);
+  const loadIntoBuilder = (q: Quotation) => {
+    setItems(q.items.map(i => ({ ...i })));
+    setCustomer({ name: q.customer.name, phone: q.customer.phone || "", address: q.customer.address || "", gstin: "" });
+    setValidDays(q.validDays);
+    setNotes(q.notes || "");
+    setDone(null);
+    setTab("new");
+    toast.success(`Copied ${q.quotationNumber} — edit and save as a new quotation`);
   };
 
-  const grandTotal = Math.floor(items.reduce((sum, i) => sum + i.lineTotal, 0));
-
-  const canGenerate = customerName.trim().length > 0 && items.length > 0;
-
-  const handleGenerate = async () => {
-    if (!canGenerate) {
-      if (!customerName.trim()) toast.error("Customer name is required");
-      else toast.error("Add at least one product");
-      return;
-    }
-
-    // Validate phone if provided
-    if (customerPhone.trim() && customerPhone.trim().length !== 10) {
-      toast.error("Enter a valid 10-digit phone number");
-      return;
-    }
-
-    setLoading(true);
+  const handleSave = async () => {
+    if (items.length === 0) return toast.error("Add at least one item");
+    if (!customer.name.trim()) return toast.error("Enter the customer name");
+    if (customer.phone && customer.phone.length !== 10) return toast.error("Phone number must be 10 digits");
+    setSaving(true);
     try {
-      const customer = {
-        name: customerName.trim(),
-        phone: customerPhone.trim() || undefined,
-        address: customerAddress.trim() || undefined,
-      };
-
-      const quotation = await saveQuotation(items, customer, validDays);
-      const blob = await generateQuotationPDF(quotation);
-
-      setGeneratedQuotation(quotation);
-      setPdfBlob(blob);
-      toast.success(`Quotation ${quotation.quotationNumber} generated`);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to generate quotation");
+      const q = await saveQuotation(items, { name: customer.name.trim(), phone: customer.phone || undefined, address: customer.address.trim() || undefined }, validDays, notes);
+      const blob = await generateQuotationPDF(q);
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+      setDone({ q, blob });
+      toast.success(`Saved ${q.quotationNumber}`);
+      document.getElementById("main-scroll")?.scrollTo({ top: 0 });
+    } catch (e) {
+      toast.error((e as Error).message || "Could not save the quotation");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleDownload = () => {
-    if (!pdfBlob || !generatedQuotation) return;
-    const url = URL.createObjectURL(pdfBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    const safeName = generatedQuotation.customer.name.replace(/[^a-zA-Z0-9]/g, '_');
-    a.download = `Quotation_${safeName}_${generatedQuotation.quotationNumber}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  const header = (
+    <div className="flex items-center justify-between gap-3 mb-4">
+      <h1 className="hidden md:block text-2xl font-semibold tracking-tight">Quotations</h1>
+      <Segmented<Tab> value={tab} onChange={t => { setTab(t); setDone(null); }} options={[{ value: "new", label: "New quotation" }, { value: "saved", label: "Saved quotations" }]} />
+    </div>
+  );
 
-  const handleWhatsAppShare = async () => {
-    if (!pdfBlob || !generatedQuotation) return;
+  if (tab === "saved") {
+    return (
+      <div>
+        {header}
+        <SavedQuotations onCopy={loadIntoBuilder} onConvert={q => router.push(`/billing?fromQuotation=${q.id}`)} />
+      </div>
+    );
+  }
 
-    const phone = generatedQuotation.customer.phone?.replace(/\D/g, '') || '';
-    const message = buildWhatsAppMessage(generatedQuotation);
-
-    // Try Web Share API first (works on mobile)
-    if (typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
-      const file = new File([pdfBlob], `Quotation_${generatedQuotation.quotationNumber}.pdf`, { type: 'application/pdf' });
-      const shareData = { files: [file], title: `Quotation ${generatedQuotation.quotationNumber}`, text: message };
-
-      if (navigator.canShare(shareData)) {
-        try {
-          await navigator.share(shareData);
-          return;
-        } catch (err: any) {
-          if (err.name !== 'AbortError') {
-            // Fall through to WhatsApp URL fallback
-          } else {
-            return; // User cancelled
-          }
-        }
-      }
-    }
-
-    // Desktop / unsupported browser fallback: open WhatsApp Web with text summary
-    const waUrl = phone
-      ? `https://wa.me/91${phone}?text=${encodeURIComponent(message)}`
-      : `https://wa.me/?text=${encodeURIComponent(message)}`;
-
-    window.open(waUrl, '_blank');
-    toast('PDF downloaded separately. Attach it in WhatsApp.', { icon: 'ℹ️' });
-    handleDownload();
-  };
+  if (done) {
+    const { q, blob } = done;
+    const file = `Quotation_${safeFileName(q.customer.name)}_${q.quotationNumber}.pdf`;
+    return (
+      <div>
+        {header}
+        <div className="max-w-md mx-auto card p-6 text-center">
+          <CheckCircle2 className="mx-auto text-emerald-600" size={48} />
+          <p className="mt-3 text-ink-3 text-sm">Quotation saved</p>
+          <p className="text-xl font-semibold">{q.quotationNumber}</p>
+          <p className="num text-3xl font-semibold mt-3">{inr(q.grandTotal)}</p>
+          <p className="text-sm text-ink-3 mt-1">{q.customer.name} · valid {q.validDays} days</p>
+          <div className="grid gap-2 mt-6">
+            <button className="btn-success h-12" onClick={() => sharePdf(blob, file, quotationMessage(q), q.customer.phone)}><Share2 size={18} /> Share on WhatsApp</button>
+            <div className="grid grid-cols-2 gap-2">
+              <button className="btn-secondary" onClick={() => downloadBlob(blob, file)}><Download size={18} /> Download</button>
+              <button className="btn-secondary" onClick={() => openBlob(blob, file)}><Printer size={18} /> Print</button>
+            </div>
+            <button className="btn-secondary" onClick={() => router.push(`/billing?fromQuotation=${q.id}`)}><Receipt size={18} /> Convert to invoice</button>
+            <button className="btn-primary h-12 mt-2" onClick={() => { setDone(null); resetAll(); }}><Plus size={18} /> New quotation</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full flex flex-col md:flex-row gap-6">
-      {/* Left: Product Search */}
-      <div className="w-full md:w-1/2 lg:w-7/12 flex flex-col h-[calc(100vh-8rem)] min-h-[600px]">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Products</h2>
-        <QuotationProductSearch
-          products={products}
-          categories={categories}
-          onAdd={handleAddProduct}
-        />
-      </div>
+    <div>
+      {header}
+      <div className="md:grid md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] md:gap-6 md:items-start">
+        <aside className="hidden md:flex card p-4 flex-col sticky top-0 h-[calc(100dvh-8rem)]">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Items</h2>
+            <button className="btn-ghost h-8 px-2 text-[13px]" onClick={() => setServiceOpen(true)}><Wrench size={15} /> Labour / service</button>
+          </div>
+          <ProductPicker products={products} categories={categories} onPick={addProduct} inCart={inCart} respectStock={false} accent="emerald" />
+        </aside>
 
-      {/* Right: Quotation Builder */}
-      <div className="w-full md:w-1/2 lg:w-5/12 flex flex-col h-[calc(100vh-8rem)] min-h-[600px] overflow-y-auto pr-2">
-
-        {/* Customer Info */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
-          <h2 className="text-lg font-bold text-gray-900 mb-3 border-b border-gray-100 pb-2 flex items-center gap-2">
-            <FileText size={18} className="text-emerald-600" />
-            Quote To
-          </h2>
-          <div className="space-y-3">
-            <input
-              type="text"
-              placeholder="Customer / Company Name *"
-              value={customerName}
-              onChange={e => setCustomerName(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
-            />
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={10}
-              placeholder="Phone Number (Optional)"
-              value={customerPhone}
-              onChange={e => setCustomerPhone(e.target.value.replace(/\D/g, ''))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 tracking-wide"
-            />
-            <input
-              type="text"
-              placeholder="Address (Optional)"
-              value={customerAddress}
-              onChange={e => setCustomerAddress(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+        <section className="space-y-4 min-w-0">
+          <div className="card p-4">
+            <h2 className="font-semibold mb-3">Quote to</h2>
+            <CustomerFields
+              customers={customers}
+              value={customer}
+              onChange={setCustomer}
+              selectedId={selectedCustomerId}
+              onSelect={c => setSelectedCustomerId(c?.id || null)}
+              showGstin={false}
+              phoneRequired={false}
             />
           </div>
-        </div>
 
-        {/* Validity */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Quotation Validity</label>
-          <div className="flex gap-2">
-            {[7, 15, 30].map(days => (
-              <button
-                key={days}
-                onClick={() => setValidDays(days)}
-                className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-all ${
-                  validDays === days
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'border-gray-300 text-gray-600 hover:border-emerald-400'
-                }`}
-              >
-                {days} Days
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Cart */}
-        <h2 className="text-xl font-bold text-gray-900 mb-2">Items</h2>
-        <QuotationCartPanel
-          items={items}
-          onSetQuantity={handleSetQuantity}
-          onRemove={handleRemove}
-        />
-
-        {/* Summary & Actions */}
-        {items.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mt-2">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-base font-semibold text-gray-700">Grand Total</span>
-              <span className="text-xl font-bold text-emerald-700">₹{grandTotal.toFixed(2)}</span>
+          <div className="card">
+            <div className="px-4 pt-4 pb-2">
+              <h2 className="font-semibold">Items {items.length > 0 && <span className="text-ink-3 font-normal">({items.length})</span>}</h2>
+              <p className="text-[13px] text-ink-3">Prices include GST</p>
             </div>
-
-            {/* If quotation already generated, show quotation number */}
-            {generatedQuotation && (
-              <div className="mb-3 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800 text-center font-medium">
-                {generatedQuotation.quotationNumber} — Generated
-              </div>
-            )}
-
-            <div className="space-y-2">
-              {!generatedQuotation ? (
-                <button
-                  onClick={handleGenerate}
-                  disabled={loading}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
-                >
-                  {loading ? (
-                    <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white" />
-                  ) : (
-                    <FileText size={18} />
-                  )}
-                  {loading ? "Generating..." : "Generate Quotation"}
-                </button>
-              ) : (
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleDownload}
-                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Download size={16} />
-                    Download PDF
-                  </button>
-                  <button
-                    onClick={handleWhatsAppShare}
-                    className="flex-1 bg-green-500 hover:bg-green-600 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Share2 size={16} />
-                    WhatsApp
-                  </button>
+            {items.length === 0 ? (
+              <div className="px-4 pb-4">
+                <div className="border-2 border-dashed border-line rounded-xl py-8 text-center text-sm text-ink-3">
+                  <Package className="mx-auto mb-2" size={24} />
+                  No items yet
                 </div>
-              )}
-
-              <button
-                onClick={handleClear}
-                className="w-full border border-gray-300 text-gray-600 hover:bg-red-50 hover:border-red-300 hover:text-red-600 font-medium py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
-              >
-                <Trash2 size={16} />
-                Clear
-              </button>
+              </div>
+            ) : (
+              <ul className="divide-y divide-line border-t border-line">
+                {items.map(item => (
+                  <li key={item.productId} className="flex items-center gap-3 px-4 py-3">
+                    <button className="flex-1 min-w-0 text-left" onClick={() => setEditing(item)}>
+                      <p className="font-medium text-[15px] leading-snug flex items-center gap-1.5">
+                        {item.isService && <Wrench size={14} className="text-ink-3 shrink-0" />}
+                        <span className="truncate">{item.name}</span>
+                      </p>
+                      <p className="text-[13px] text-ink-3 num mt-0.5">{inr2(item.unitPrice)} / {item.unitName}<span className="text-emerald-700 ml-1.5 inline-flex items-center">Edit<ChevronRight size={12} /></span></p>
+                    </button>
+                    <div className="flex items-center border border-line rounded-lg h-9 shrink-0">
+                      <button className="w-9 h-full text-lg text-ink-2" onClick={() => stepQty(item, -1)} aria-label="Decrease">−</button>
+                      <button className="min-w-[2.5rem] px-1 h-full num text-sm font-semibold border-x border-line" onClick={() => setEditing(item)}>{item.quantity}</button>
+                      <button className="w-9 h-full text-lg text-ink-2" onClick={() => stepQty(item, 1)} aria-label="Increase">+</button>
+                    </div>
+                    <p className="num font-semibold w-20 text-right shrink-0">{inr(item.lineTotal, item.lineTotal % 1 ? 2 : 0)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2 p-3 border-t border-line md:hidden">
+              <button className="btn-success flex-1" onClick={() => setPickerOpen(true)}><Plus size={18} /> Add items</button>
+              <button className="btn-secondary" onClick={() => setServiceOpen(true)}><Wrench size={16} /> Labour</button>
             </div>
           </div>
-        )}
 
-        {items.length === 0 && (
-          <div className="mt-4 p-4 bg-emerald-50 border border-emerald-100 rounded-xl text-sm text-emerald-700 text-center">
-            Add products from the left panel to build a quotation
+          <div className="card p-4 space-y-3">
+            <div>
+              <label className="label">Valid for</label>
+              <div className="flex gap-2">
+                {[7, 15, 30].map(d => (
+                  <button key={d} type="button" onClick={() => setValidDays(d)} className={validDays === d ? "chip-active" : "chip"}>{d} days</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label">Notes on quotation</label>
+              <textarea className="input" rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Borewell depth 450 ft · 1 year motor warranty · delivery in 2 days" />
+            </div>
           </div>
-        )}
+
+          <button className="btn-ghost w-full text-red-600" onClick={() => setConfirmClear(true)} disabled={!items.length && !customer.name}>Clear quotation</button>
+
+          <TotalBar
+            amount={inr(total)}
+            caption={items.length ? `${items.length} item${items.length > 1 ? "s" : ""} · incl. GST · valid ${validDays} days` : "Add items to start"}
+            actionLabel="Save quotation"
+            onAction={handleSave}
+            loading={saving}
+            disabled={items.length === 0}
+          />
+        </section>
       </div>
+
+      {pickerOpen && (
+        <Modal
+          title="Add items"
+          subtitle={items.length ? `${items.length} in quotation · ${inr(total)}` : "Tap an item to add it"}
+          onClose={() => setPickerOpen(false)}
+          fullOnMobile
+          size="lg"
+          footer={<button className="btn-success w-full h-12" onClick={() => setPickerOpen(false)}>Done</button>}
+        >
+          <div className="h-full flex flex-col">
+            <ProductPicker products={products} categories={categories} onPick={addProduct} inCart={inCart} respectStock={false} accent="emerald" />
+          </div>
+        </Modal>
+      )}
+
+      {serviceOpen && (
+        <ServiceItemModal
+          accent="emerald"
+          onClose={() => setServiceOpen(false)}
+          onAdd={s => {
+            const unitPrice = round2(s.rateExclGst * (1 + s.gst / 100));
+            setItems(prev => [...prev, {
+              productId: `svc-${Date.now().toString(36)}`, name: s.name, unitName: s.unitName, quantity: s.qty,
+              unitPrice, lineTotal: round2(unitPrice * s.qty), isService: true, gstPercentage: s.gst,
+            }]);
+            setServiceOpen(false);
+          }}
+        />
+      )}
+
+      {editing && (
+        <QuoteLineModal
+          item={editing}
+          onClose={() => setEditing(null)}
+          onRemove={() => { setItems(prev => prev.filter(i => i.productId !== editing.productId)); setEditing(null); }}
+          onSave={u => { setItems(prev => prev.map(i => (i.productId === u.productId ? u : i))); setEditing(null); }}
+        />
+      )}
+
+      {confirmClear && (
+        <ConfirmModal
+          title="Clear this quotation?"
+          message="All items and customer details on this unsaved quotation will be removed."
+          confirmText="Clear"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => { resetAll(); setConfirmClear(false); }}
+        />
+      )}
     </div>
   );
 }
 
-function buildWhatsAppMessage(q: Quotation): string {
-  const lines = [
-    `*Price Quotation — ${q.quotationNumber}*`,
-    `Date: ${new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(q.date))}`,
-    `Customer: ${q.customer.name}`,
-    '',
-    '*Items:*',
-    ...q.items.map(i => `• ${i.name} × ${i.quantity} — ₹${i.lineTotal.toFixed(2)}`),
-    '',
-    `*Total: ₹${q.grandTotal.toFixed(2)}*`,
-    `_Valid for ${q.validDays} days_`,
-    '',
-    '— R.K Pumps & Motors',
-  ];
-  return lines.join('\n');
+function QuoteLineModal({ item, onSave, onRemove, onClose }: {
+  item: QuotationItem; onSave: (i: QuotationItem) => void; onRemove: () => void; onClose: () => void;
+}) {
+  const [qty, setQty] = useState(String(item.quantity));
+  const [price, setPrice] = useState(String(item.unitPrice));
+  const q = round3(Number(qty) || 0);
+  const p = round2(Number(price) || 0);
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (q <= 0 || p < 0) return;
+    onSave({ ...item, quantity: q, unitPrice: p, lineTotal: round2(p * q) });
+  };
+  return (
+    <Modal
+      title={item.name}
+      subtitle={item.isService ? "Labour / service" : item.unitName}
+      onClose={onClose}
+      footer={
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onRemove} className="btn-ghost text-red-600 px-3"><Trash2 size={18} /> Remove</button>
+          <div className="flex-1 text-right pr-2">
+            <p className="text-xs text-ink-3">Line total</p>
+            <p className="num font-semibold">{inr2(p * q)}</p>
+          </div>
+          <button form="qline" type="submit" className="btn-success" disabled={q <= 0}>Update</button>
+        </div>
+      }
+    >
+      <form id="qline" onSubmit={save} className="space-y-4">
+        <div>
+          <label className="label">Quantity</label>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn-secondary w-12 px-0 text-lg" onClick={() => setQty(String(Math.max(1, round2(q - 1))))}>−</button>
+            <input className="input num text-center text-lg font-semibold" inputMode="decimal" value={qty} onChange={e => setQty(e.target.value.replace(/[^0-9.]/g, ""))} autoFocus />
+            <button type="button" className="btn-secondary w-12 px-0 text-lg" onClick={() => setQty(String(round2(q + 1)))}>+</button>
+          </div>
+        </div>
+        <div>
+          <label className="label">Price per {item.unitName} (incl. GST)</label>
+          <input className="input num" inputMode="decimal" value={price} onChange={e => setPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function SavedQuotations({ onCopy, onConvert }: { onCopy: (q: Quotation) => void; onConvert: (q: Quotation) => void }) {
+  const [list, setList] = useState<Quotation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "open" | "converted" | "expired">("all");
+  const [open, setOpen] = useState<Quotation | null>(null);
+  const [toDelete, setToDelete] = useState<Quotation | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    getQuotations().then(setList).catch(() => toast.error("Could not load quotations")).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const statusOf = (q: Quotation) => {
+    if (q.status === "converted") return "converted";
+    const until = new Date(q.date); until.setDate(until.getDate() + q.validDays);
+    return until < new Date() ? "expired" : "open";
+  };
+
+  const shown = list.filter(q => {
+    const s = search.toLowerCase();
+    const m = !s || q.customer.name.toLowerCase().includes(s) || q.quotationNumber.toLowerCase().includes(s) || (q.customer.phone || "").includes(s);
+    return m && (filter === "all" || statusOf(q) === filter);
+  });
+
+  const withPdf = async (q: Quotation, fn: (blob: Blob, file: string) => void | Promise<void>) => {
+    setBusy(true);
+    try {
+      const blob = await generateQuotationPDF(q);
+      await fn(blob, `Quotation_${safeFileName(q.customer.name)}_${q.quotationNumber}.pdf`);
+    } catch { toast.error("Could not create the PDF"); } finally { setBusy(false); }
+  };
+
+  if (loading) return <Loading text="Loading quotations…" />;
+
+  const badge = (s: string) =>
+    s === "converted" ? <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-brand-50 text-brand-700 ring-1 ring-brand-100">Invoiced</span>
+      : s === "expired" ? <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-surface text-ink-3 ring-1 ring-line">Expired</span>
+        : <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">Open</span>;
+
+  return (
+    <div className="space-y-3">
+      <SearchInput value={search} onChange={setSearch} placeholder="Search customer, phone or quotation no." />
+      <div className="flex gap-2 overflow-x-auto no-scrollbar">
+        {(["all", "open", "converted", "expired"] as const).map(f => (
+          <button key={f} onClick={() => setFilter(f)} className={filter === f ? "chip-active" : "chip"}>
+            {f === "all" ? "All" : f === "open" ? "Open" : f === "converted" ? "Invoiced" : "Expired"}
+          </button>
+        ))}
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="card"><EmptyState icon={FileText} title="No quotations found" text="Quotations you save appear here, ready to share again or turn into an invoice." /></div>
+      ) : (
+        <ul className="card divide-y divide-line">
+          {shown.map(q => (
+            <li key={q.id}>
+              <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface/60" onClick={() => setOpen(q)}>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{q.customer.name}</p>
+                  <p className="text-[13px] text-ink-3 num">{q.quotationNumber} · {formatDate(new Date(q.date))}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="num font-semibold">{inr(q.grandTotal)}</p>
+                  <div className="mt-0.5">{badge(statusOf(q))}</div>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {open && (
+        <Modal
+          title={open.quotationNumber}
+          subtitle={`${open.customer.name} · ${formatDate(new Date(open.date))}`}
+          onClose={() => setOpen(null)}
+          footer={
+            <div className="grid grid-cols-2 gap-2">
+              <button className="btn-success col-span-2" disabled={busy} onClick={() => withPdf(open, (b, f) => sharePdf(b, f, quotationMessage(open), open.customer.phone))}><Share2 size={18} /> Share on WhatsApp</button>
+              <button className="btn-secondary" disabled={busy} onClick={() => withPdf(open, (b, f) => downloadBlob(b, f))}><Download size={18} /> Download</button>
+              <button className="btn-secondary" disabled={busy} onClick={() => withPdf(open, (b, f) => openBlob(b, f))}><Printer size={18} /> Print</button>
+              <button className="btn-secondary" onClick={() => { onCopy(open); setOpen(null); }}><Copy size={18} /> Copy to new</button>
+              {open.status === "converted" ? (
+                <span className="btn-ghost text-brand-700 cursor-default">Invoiced: {open.convertedBillNumber}</span>
+              ) : (
+                <button className="btn-primary" onClick={() => onConvert(open)}><Receipt size={18} /> Convert to invoice</button>
+              )}
+            </div>
+          }
+        >
+          <ul className="divide-y divide-line -mt-2">
+            {open.items.map((i, idx) => (
+              <li key={idx} className="flex justify-between gap-3 py-2.5 text-sm">
+                <span className="min-w-0">
+                  <span className="block font-medium">{i.name}</span>
+                  <span className="text-ink-3 num">{i.quantity} × {inr2(i.unitPrice)}</span>
+                </span>
+                <span className="num font-semibold shrink-0">{inr2(i.lineTotal)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-between font-semibold pt-3 mt-1 border-t border-line">
+            <span>Total (incl. GST)</span><span className="num">{inr(open.grandTotal)}</span>
+          </div>
+          {open.notes && <p className="text-sm text-ink-2 mt-3 bg-surface rounded-lg p-3">{open.notes}</p>}
+          <button className="btn-ghost text-red-600 w-full mt-3" onClick={() => { setToDelete(open); setOpen(null); }}><Trash2 size={16} /> Delete quotation</button>
+        </Modal>
+      )}
+
+      {toDelete && (
+        <ConfirmModal
+          title="Delete quotation?"
+          message={`${toDelete.quotationNumber} for ${toDelete.customer.name} will be removed. Invoices are not affected.`}
+          confirmText="Delete"
+          onCancel={() => setToDelete(null)}
+          onConfirm={async () => {
+            try { await deleteQuotation(toDelete.id); toast.success("Quotation deleted"); load(); } catch { toast.error("Could not delete"); }
+            setToDelete(null);
+          }}
+        />
+      )}
+    </div>
+  );
 }

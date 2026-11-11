@@ -1,200 +1,139 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getSuppliers, addSupplier, deleteSupplier } from "../../lib/db";
-import { Supplier } from "../../types";
-import { Truck, Plus, Trash2, Phone, MapPin } from "lucide-react";
-import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
+import { MapPin, Pencil, Phone, Plus, Trash2, Truck } from "lucide-react";
+import { getSuppliers, addSupplier, updateSupplier, deleteSupplier, getProducts } from "../../lib/db";
+import { Product, Supplier } from "../../types";
+import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { Modal } from "../../components/ui/Modal";
+import { EmptyState, Loading, PageHeader, SearchInput } from "../../components/ui/Common";
+import { isValidGstin } from "../../lib/utils";
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [form, setForm] = useState<Supplier | "new" | null>(null);
+  const [toDelete, setToDelete] = useState<Supplier | null>(null);
 
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-
-  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
-
-  useEffect(() => {
-    loadSuppliers();
-  }, []);
-
-  const loadSuppliers = async () => {
+  const load = async () => {
     try {
-      const data = await getSuppliers();
-      setSuppliers(data);
-    } catch (error) {
-      toast.error("Failed to load suppliers");
-    } finally {
-      setLoading(false);
-    }
+      const [s, p] = await Promise.all([getSuppliers(), getProducts()]);
+      setSuppliers(s.sort((a, b) => a.name.localeCompare(b.name)));
+      setProducts(p);
+    } catch { toast.error("Could not load suppliers"); } finally { setLoading(false); }
   };
+  useEffect(() => { load(); }, []);
 
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return;
-    if (phone.trim() && phone.trim().length !== 10) {
-      toast.error("Phone number must be exactly 10 digits");
-      return;
-    }
-    setAdding(true);
-    try {
-      const sup = await addSupplier({ name: name.trim(), phone: phone.trim(), address: address.trim() });
-      setSuppliers(prev => [sup, ...prev]);
-      setName(""); setPhone(""); setAddress("");
-      setShowForm(false);
-      toast.success("Supplier added");
-    } catch (error) {
-      console.error("Add supplier error:", error);
-      toast.error((error as Error).message || "Failed to add supplier");
-    } finally {
-      setAdding(false);
-    }
-  };
+  const shown = suppliers.filter(s => {
+    const q = search.toLowerCase();
+    return !q || s.name.toLowerCase().includes(q) || (s.phone || "").includes(q) || (s.address || "").toLowerCase().includes(q);
+  });
 
   const confirmDelete = async () => {
-    if (!supplierToDelete) return;
+    if (!toDelete) return;
     try {
-      await deleteSupplier(supplierToDelete);
-      setSuppliers(prev => prev.filter(s => s.id !== supplierToDelete));
+      await deleteSupplier(toDelete.id);
+      setSuppliers(prev => prev.filter(s => s.id !== toDelete.id));
       toast.success("Supplier deleted");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to delete supplier");
+      toast.error((error as Error).message || "Could not delete");
     } finally {
-      setSupplierToDelete(null);
+      setToDelete(null);
     }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Truck size={24} className="text-indigo-600" />
-          Suppliers
-        </h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2"
-        >
-          <Plus size={18} /> Add Supplier
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        title="Suppliers"
+        subtitle={`${suppliers.length} suppliers`}
+        actions={<button className="btn-primary px-3" onClick={() => setForm("new")}><Plus size={18} /><span className="hidden sm:inline">Add supplier</span></button>}
+      />
+      <div className="mb-4"><SearchInput value={search} onChange={setSearch} placeholder="Search name, phone or town" /></div>
 
-      {showForm && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-          <h2 className="text-base font-semibold text-gray-800 mb-4">New Supplier</h2>
-          <form onSubmit={handleAdd} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Supplier Name *</label>
-              <input
-                required
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="e.g. Rajesh Traders"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Phone (Optional)</label>
-              <input
-                type="text"
-                value={phone}
-                onChange={e => setPhone(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
-                placeholder="10-digit number"
-                maxLength={10}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Address (Optional)</label>
-              <input
-                type="text"
-                value={address}
-                onChange={e => setAddress(e.target.value)}
-                placeholder="City, State"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div className="md:col-span-3 flex gap-3 justify-end">
-              <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={adding}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {adding ? "Saving..." : "Add Supplier"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Loading suppliers...</div>
+      {loading ? <Loading /> : shown.length === 0 ? (
+        <div className="card"><EmptyState icon={Truck} title={suppliers.length ? "No suppliers match" : "No suppliers yet"} text="Add the dealers you buy pumps, motors and pipes from."
+          action={!suppliers.length ? <button className="btn-primary" onClick={() => setForm("new")}><Plus size={18} /> Add supplier</button> : undefined} /></div>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          {suppliers.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">
-              <Truck size={40} className="mx-auto mb-3 text-gray-300" />
-              <p>No suppliers added yet. Add your first supplier above.</p>
-            </div>
-          ) : (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 text-sm">
-                  <th className="p-4">Supplier Name</th>
-                  <th className="p-4">Phone</th>
-                  <th className="p-4">Address</th>
-                  <th className="p-4">Added On</th>
-                  <th className="p-4 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suppliers.map(s => (
-                  <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="p-4 font-medium text-gray-900">{s.name}</td>
-                    <td className="p-4 text-gray-600">
-                      {s.phone ? <span className="flex items-center gap-1"><Phone size={14} className="text-gray-400" />{s.phone}</span> : '-'}
-                    </td>
-                    <td className="p-4 text-gray-500 text-sm">
-                      {s.address ? <span className="flex items-center gap-1"><MapPin size={14} className="text-gray-400" />{s.address}</span> : '-'}
-                    </td>
-                    <td className="p-4 text-gray-500 text-sm">
-                      {s.createdAt ? new Date(s.createdAt).toLocaleDateString('en-IN') : '-'}
-                    </td>
-                    <td className="p-4 text-center">
-                      <button
-                        onClick={() => setSupplierToDelete(s.id)}
-                        className="text-red-500 hover:text-red-700 p-1"
-                        title="Delete Supplier"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <ul className="card divide-y divide-line">
+          {shown.map(s => {
+            const count = products.filter(p => p.supplierId === s.id).length;
+            return (
+              <li key={s.id} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{s.name}</p>
+                  <p className="text-[13px] text-ink-3 truncate flex items-center gap-3">
+                    {s.phone && <span className="inline-flex items-center gap-1 num"><Phone size={12} />{s.phone}</span>}
+                    {s.address && <span className="inline-flex items-center gap-1"><MapPin size={12} />{s.address}</span>}
+                    <span>{count} product{count === 1 ? "" : "s"}</span>
+                  </p>
+                </div>
+                {s.phone && <a href={`tel:${s.phone}`} className="icon-btn text-brand-700" aria-label={`Call ${s.name}`}><Phone size={17} /></a>}
+                <button className="icon-btn" onClick={() => setForm(s)} aria-label="Edit supplier"><Pencil size={17} /></button>
+                <button className="icon-btn text-ink-3" onClick={() => setToDelete(s)} aria-label="Delete supplier"><Trash2 size={17} /></button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
-      {supplierToDelete && (
+      {form && <SupplierForm supplier={form === "new" ? null : form} onClose={() => setForm(null)} onSaved={() => { setForm(null); load(); }} />}
+      {toDelete && (
         <ConfirmModal
-          title="Delete Supplier"
-          message="Are you sure you want to delete this supplier? This will not affect products linked to this supplier."
+          title="Delete supplier?"
+          message={`${toDelete.name} will be removed. Products linked to this supplier are not affected.`}
           onConfirm={confirmDelete}
-          onCancel={() => setSupplierToDelete(null)}
+          onCancel={() => setToDelete(null)}
           confirmText="Delete"
         />
       )}
     </div>
+  );
+}
+
+function SupplierForm({ supplier, onClose, onSaved }: { supplier: Supplier | null; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(supplier?.name || "");
+  const [phone, setPhone] = useState(supplier?.phone || "");
+  const [address, setAddress] = useState(supplier?.address || "");
+  const [gstin, setGstin] = useState(supplier?.gstin || "");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return toast.error("Enter the supplier name");
+    if (phone && phone.length !== 10) return toast.error("Phone number must be 10 digits");
+    if (gstin && !isValidGstin(gstin)) return toast.error("GSTIN looks wrong — check it or leave it empty");
+    setSaving(true);
+    try {
+      const data = { name: name.trim(), phone, address: address.trim(), gstin };
+      if (supplier) await updateSupplier(supplier.id, data);
+      else await addSupplier(data);
+      toast.success(supplier ? "Supplier updated" : "Supplier added");
+      onSaved();
+    } catch (err) {
+      toast.error((err as Error).message || "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={supplier ? "Edit supplier" : "Add supplier"}
+      onClose={onClose}
+      footer={<div className="flex gap-3"><button className="btn-secondary flex-1" onClick={onClose}>Cancel</button><button form="sup-form" className="btn-primary flex-1" disabled={saving}>{saving ? "Saving…" : "Save supplier"}</button></div>}
+    >
+      <form id="sup-form" onSubmit={submit} className="space-y-3">
+        <div><label className="label">Supplier name *</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Rajesh Traders" autoFocus /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="label">Phone</label><input className="input num" type="tel" inputMode="numeric" value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} /></div>
+          <div><label className="label">Town</label><input className="input" value={address} onChange={e => setAddress(e.target.value)} /></div>
+        </div>
+        <div><label className="label">GSTIN</label><input className="input uppercase placeholder:normal-case" maxLength={15} value={gstin} onChange={e => setGstin(e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, ""))} placeholder="Optional" /></div>
+      </form>
+    </Modal>
   );
 }

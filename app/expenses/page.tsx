@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { getExpenses, addExpense } from "../../lib/db";
-import { Expense } from "../../types";
-import { Receipt, Plus, IndianRupee } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { Download, Plus, Trash2, Wallet } from "lucide-react";
+import { getExpenses, addExpense, deleteExpense } from "../../lib/db";
+import { Expense } from "../../types";
+import { Modal } from "../../components/ui/Modal";
+import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { EmptyState, Loading, PageHeader, Stat, inr, inr2 } from "../../components/ui/Common";
+import { RANGE_LABELS, RangeKey, downloadCsv, inRange, rangeBounds } from "../../lib/dates";
+import { formatDate } from "../../lib/utils";
 
 const EXPENSE_CATEGORIES = [
   "Transport",
@@ -18,251 +23,169 @@ const EXPENSE_CATEGORIES = [
   "Miscellaneous",
 ];
 
+const todayStr = () => new Date().toLocaleDateString("en-CA");
+
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [adding, setAdding] = useState(false);
-
-  const [title, setTitle] = useState("");
-  const [amount, setAmount] = useState<number | "">("");
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
-  const [note, setNote] = useState("");
-
+  const [toDelete, setToDelete] = useState<Expense | null>(null);
   const [filterCategory, setFilterCategory] = useState("ALL");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [range, setRange] = useState<RangeKey>("month");
+
+  const load = async () => {
+    try { setExpenses(await getExpenses()); } catch { toast.error("Could not load expenses"); } finally { setLoading(false); }
+  };
 
   useEffect(() => {
-    loadExpenses();
+    if (new URLSearchParams(window.location.search).get("action") === "add") setShowForm(true);
+    load();
   }, []);
 
-  const loadExpenses = async () => {
-    try {
-      const data = await getExpenses();
-      setExpenses(data);
-    } catch (error) {
-      toast.error("Failed to load expenses");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const filtered = useMemo(() => {
+    const b = rangeBounds(range);
+    return expenses.filter(e => (filterCategory === "ALL" || e.category === filterCategory) && inRange(e.createdAt, b));
+  }, [expenses, filterCategory, range]);
 
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !amount || Number(amount) <= 0) {
-      toast.error("Title and a valid amount are required");
-      return;
-    }
-    setAdding(true);
-    try {
-      const exp = await addExpense({
-        title: title.trim(),
-        amount: Number(amount),
-        category,
-        note: note.trim(),
-      });
-      setExpenses(prev => [exp, ...prev]);
-      setTitle(""); setAmount(""); setNote("");
-      setCategory(EXPENSE_CATEGORIES[0]);
-      setShowForm(false);
-      toast.success("Expense recorded");
-    } catch (error) {
-      console.error("Add expense error:", error);
-      toast.error((error as Error).message || "Failed to add expense");
-    } finally {
-      setAdding(false);
-    }
-  };
+  const total = filtered.reduce((s, e) => s + e.amount, 0);
+  const monthTotal = expenses.filter(e => inRange(e.createdAt, rangeBounds("month"))).reduce((s, e) => s + e.amount, 0);
+  const byCat = useMemo(() => {
+    const m: Record<string, number> = {};
+    filtered.forEach(e => (m[e.category] = (m[e.category] || 0) + e.amount));
+    return Object.entries(m).sort((a, b) => b[1] - a[1]);
+  }, [filtered]);
 
-  const filtered = expenses.filter(e => {
-    const matchesCat = filterCategory === "ALL" || e.category === filterCategory;
-    let matchesDate = true;
-    const expDate = new Date(e.createdAt);
-    expDate.setHours(0, 0, 0, 0);
-    if (startDate) {
-      const [y, m, d] = startDate.split('-').map(Number);
-      if (expDate < new Date(y, m - 1, d)) matchesDate = false;
-    }
-    if (endDate) {
-      const [y, m, d] = endDate.split('-').map(Number);
-      const end = new Date(y, m - 1, d);
-      end.setHours(23, 59, 59, 999);
-      if (expDate > end) matchesDate = false;
-    }
-    return matchesCat && matchesDate;
-  });
-
-  const totalFiltered = filtered.reduce((sum, e) => sum + e.amount, 0);
-
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
-  const thisMonthExpenses = expenses.filter(e => {
-    const d = new Date(e.createdAt);
-    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-  });
-  const thisMonthTotal = thisMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const exportCsv = () =>
+    downloadCsv(`Expenses_${RANGE_LABELS[range].replace(/\s/g, "_")}.csv`, ["Date", "Title", "Category", "Amount", "Note"],
+      filtered.map(e => [formatDate(new Date(e.createdAt)), e.title, e.category, e.amount.toFixed(2), e.note || ""]));
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Receipt size={24} className="text-indigo-600" />
-          Expenses
-        </h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2"
-        >
-          <Plus size={18} /> Add Expense
-        </button>
+    <div>
+      <PageHeader
+        title="Expenses"
+        subtitle="Fuel, transport, rent, labour"
+        actions={
+          <>
+            <button className="btn-secondary px-3" onClick={exportCsv}><Download size={18} /><span className="hidden sm:inline">Export</span></button>
+            <button className="btn-primary px-3" onClick={() => setShowForm(true)}><Plus size={18} /><span className="hidden sm:inline">Add expense</span></button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <Stat label="This month" value={inr(monthTotal)} tone="bad" />
+        <Stat label={`${RANGE_LABELS[range]}${filterCategory !== "ALL" ? ` · ${filterCategory}` : ""}`} value={inr(total)} sub={`${filtered.length} entries`} />
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className="bg-red-50 border border-red-100 p-4 rounded-xl">
-          <p className="text-sm text-red-700 font-medium">This Month's Expenses</p>
-          <p className="text-2xl font-bold text-red-900">₹{thisMonthTotal.toLocaleString('en-IN')}</p>
-          <p className="text-xs text-red-600 mt-1">{thisMonthExpenses.length} transactions</p>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-          <p className="text-sm text-gray-600 font-medium">Total All Time</p>
-          <p className="text-2xl font-bold text-gray-900">₹{expenses.reduce((s, e) => s + e.amount, 0).toLocaleString('en-IN')}</p>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-          <p className="text-sm text-gray-600 font-medium">Filtered Total</p>
-          <p className="text-2xl font-bold text-gray-900">₹{totalFiltered.toLocaleString('en-IN')}</p>
-        </div>
-      </div>
-
-      {showForm && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-          <h2 className="text-base font-semibold text-gray-800 mb-4">Record New Expense</h2>
-          <form onSubmit={handleAdd} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Expense Title *</label>
-              <input
-                required
-                type="text"
-                value={title}
-                onChange={e => setTitle(e.target.value)}
-                placeholder="e.g. Petrol for delivery"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Amount (₹) *</label>
-              <input
-                required
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={amount}
-                onChange={e => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
-                placeholder="0.00"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Note (Optional)</label>
-              <input
-                type="text"
-                value={note}
-                onChange={e => setNote(e.target.value)}
-                placeholder="Additional details..."
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-            <div className="md:col-span-2 flex gap-3 justify-end">
-              <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
-              <button
-                type="submit"
-                disabled={adding}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {adding ? "Saving..." : "Record Expense"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3">
-        <select
-          value={filterCategory}
-          onChange={e => setFilterCategory(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="ALL">All Categories</option>
+      <div className="flex gap-2 overflow-x-auto no-scrollbar mb-2 items-center">
+        {(["today", "week", "month", "lastMonth", "fy", "all"] as RangeKey[]).map(r => (
+          <button key={r} onClick={() => setRange(r)} className={range === r ? "chip-active" : "chip"}>{RANGE_LABELS[r]}</button>
+        ))}
+        <span className="w-px h-6 bg-line mx-1 shrink-0" />
+        <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="h-9 rounded-full border border-line bg-white px-3 text-[13px] font-medium text-ink-2">
+          <option value="ALL">All categories</option>
           {EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <input
-          type="date"
-          value={startDate}
-          onChange={e => setStartDate(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-          title="From Date"
-        />
-        <input
-          type="date"
-          value={endDate}
-          onChange={e => setEndDate(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500"
-          title="To Date"
-        />
-        <button
-          onClick={() => { setFilterCategory("ALL"); setStartDate(""); setEndDate(""); }}
-          className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2"
-        >
-          Clear Filters
-        </button>
       </div>
 
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Loading expenses...</div>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 text-sm">
-                <th className="p-4">Date</th>
-                <th className="p-4">Title</th>
-                <th className="p-4">Category</th>
-                <th className="p-4">Note</th>
-                <th className="p-4 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(e => (
-                <tr key={e.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="p-4 text-sm text-gray-600">{new Date(e.createdAt).toLocaleDateString('en-IN')}</td>
-                  <td className="p-4 font-medium text-gray-900">{e.title}</td>
-                  <td className="p-4">
-                    <span className="px-2 py-0.5 bg-red-50 text-red-700 rounded text-xs font-medium">{e.category}</span>
-                  </td>
-                  <td className="p-4 text-gray-500 text-sm">{e.note || '-'}</td>
-                  <td className="p-4 text-right font-semibold text-red-700">₹{e.amount.toFixed(2)}</td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-8 text-center text-gray-500">No expenses found.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {byCat.length > 1 && (
+        <div className="card p-4 mb-4">
+          <p className="text-sm font-semibold mb-2">Where the money went</p>
+          <div className="space-y-2">
+            {byCat.map(([c, amt]) => (
+              <div key={c}>
+                <div className="flex justify-between text-sm"><span className="text-ink-2">{c}</span><span className="num">{inr(amt)}</span></div>
+                <div className="h-1.5 bg-surface rounded-full mt-1"><div className="h-full bg-red-400 rounded-full" style={{ width: `${(amt / total) * 100}%` }} /></div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
+
+      {loading ? <Loading /> : filtered.length === 0 ? (
+        <div className="card"><EmptyState icon={Wallet} title="No expenses for this period" text="Record fuel, transport and labour costs so your net profit is accurate."
+          action={<button className="btn-primary" onClick={() => setShowForm(true)}><Plus size={18} /> Add expense</button>} /></div>
+      ) : (
+        <ul className="card divide-y divide-line">
+          {filtered.map(e => (
+            <li key={e.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{e.title}</p>
+                <p className="text-[13px] text-ink-3 truncate">{formatDate(new Date(e.createdAt))} · {e.category}{e.note ? ` · ${e.note}` : ""}</p>
+              </div>
+              <p className="num font-semibold text-red-700 shrink-0">{inr2(e.amount)}</p>
+              <button className="icon-btn text-ink-3" onClick={() => setToDelete(e)} aria-label="Delete expense"><Trash2 size={17} /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {showForm && <ExpenseForm onClose={() => setShowForm(false)} onSaved={exp => { setExpenses(prev => [exp, ...prev].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))); setShowForm(false); }} />}
+      {toDelete && (
+        <ConfirmModal
+          title="Delete expense?"
+          message={`${toDelete.title} (${inr2(toDelete.amount)}) will be removed.`}
+          confirmText="Delete"
+          onCancel={() => setToDelete(null)}
+          onConfirm={async () => {
+            try { await deleteExpense(toDelete.id); setExpenses(prev => prev.filter(x => x.id !== toDelete.id)); toast.success("Expense deleted"); }
+            catch { toast.error("Could not delete"); }
+            setToDelete(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function ExpenseForm({ onClose, onSaved }: { onClose: () => void; onSaved: (e: Expense) => void }) {
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [date, setDate] = useState(todayStr());
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !(Number(amount) > 0)) return toast.error("Enter a title and amount");
+    setSaving(true);
+    try {
+      const [y, m, d] = date.split("-").map(Number);
+      const now = new Date();
+      const when = date === todayStr() ? now : new Date(y, m - 1, d, 12, 0);
+      const exp = await addExpense({ title: title.trim(), amount: Number(amount), category, note: note.trim() }, when);
+      toast.success("Expense saved");
+      onSaved(exp);
+    } catch (err) {
+      toast.error((err as Error).message || "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Add expense"
+      onClose={onClose}
+      footer={<div className="flex gap-3"><button className="btn-secondary flex-1" onClick={onClose}>Cancel</button><button form="exp-form" className="btn-primary flex-1" disabled={saving}>{saving ? "Saving…" : "Save expense"}</button></div>}
+    >
+      <form id="exp-form" onSubmit={submit} className="space-y-3">
+        <div>
+          <label className="label">Category</label>
+          <div className="flex flex-wrap gap-1.5">
+            {EXPENSE_CATEGORIES.map(c => (
+              <button type="button" key={c} onClick={() => setCategory(c)} className={category === c ? "chip-active" : "chip"}>{c}</button>
+            ))}
+          </div>
+        </div>
+        <div><label className="label">What for *</label><input className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Diesel for site visit" autoFocus /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="label">Amount (₹) *</label><input className="input num" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="0" /></div>
+          <div><label className="label">Date</label><input type="date" className="input" value={date} max={todayStr()} onChange={e => setDate(e.target.value || todayStr())} /></div>
+        </div>
+        <div><label className="label">Note</label><input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional" /></div>
+      </form>
+    </Modal>
   );
 }

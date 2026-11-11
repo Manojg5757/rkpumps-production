@@ -44,20 +44,13 @@ export function LoginModal({ onClose }: LoginModalProps) {
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
         {/* Header */}
-        <div className="bg-gray-900 px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 rounded-lg p-2">
-              <Lock size={18} className="text-white" />
-            </div>
-            <div>
-              <p className="text-white font-semibold text-sm">Admin Login</p>
-              <p className="text-gray-400 text-xs">R.K Pumps &amp; Motors POS</p>
-            </div>
-          </div>
+        <div className="relative bg-white px-6 pt-6 pb-2 flex flex-col items-center text-center border-b border-line">
+          <img src="/logo-full.png" alt="R.K Pumps — Borewell pump installation" width={160} height={160} className="h-36 w-36 object-contain" />
+          <p className="text-ink font-semibold text-sm mt-1 flex items-center gap-1.5"><Lock size={14} className="text-brand-600" /> Owner login</p>
           {onClose && (
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-white p-1 transition-colors"
+              className="absolute right-3 top-3 icon-btn"
               aria-label="Close"
             >
               <X size={18} />
@@ -80,7 +73,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
                 placeholder="admin@example.com"
                 required
                 disabled={loading}
-                className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 bg-gray-50"
+                className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent disabled:opacity-60 bg-gray-50"
               />
             </div>
           </div>
@@ -98,7 +91,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
                 placeholder="••••••••"
                 required
                 disabled={loading}
-                className="w-full pl-9 pr-9 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-60 bg-gray-50"
+                className="w-full pl-9 pr-9 py-2.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent disabled:opacity-60 bg-gray-50"
               />
               <button
                 type="button"
@@ -121,7 +114,7 @@ export function LoginModal({ onClose }: LoginModalProps) {
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center space-x-2"
+              className="flex-1 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center space-x-2"
             >
               {loading ? (
                 <>

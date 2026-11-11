@@ -1,331 +1,196 @@
 import { Sale } from '../types';
-import { BUSINESS_INFO } from './config';
+import { getSettings } from './settings';
 import { formatCurrency, formatDate, numberToWords } from './utils';
+import {
+  createDoc, drawHeader, drawParty, drawFooter, ensureSpace, addPageNumbers, normal, bold,
+  INK, BRAND, LIGHT, BORDER, MUTED, M, CW, PAGE_W,
+} from './pdfCommon';
+
+const money = (n: number) => formatCurrency(n).replace('₹', '₹ ');
 
 export async function generateBillPDF(sale: Sale): Promise<Blob> {
-  const { default: jsPDF } = await import('jspdf');
-  const { default: autoTable } = await import('jspdf-autotable');
+  const s = await getSettings();
+  const { doc, autoTable } = await createDoc();
 
-  const [{ NotoSansRegular }, { NotoSansBold }] = await Promise.all([
-    import('./fonts/NotoSans-Regular'),
-    import('./fonts/NotoSans-Bold'),
+  const isTaxInvoice = !!s.gstin;
+  const inter = !!sale.isInterState;
+  const finalTotal = sale.finalTotal ?? Math.floor(sale.grandTotal);
+  const roundOff = sale.roundOff ?? finalTotal - sale.grandTotal;
+
+  const meta: [string, string][] = [
+    ['Invoice No', sale.billNumber],
+    ['Date', formatDate(new Date(sale.date))],
+  ];
+  if (sale.placeOfSupply) meta.push(['Place of supply', sale.placeOfSupply]);
+
+  let y = drawHeader(doc, s, BRAND, isTaxInvoice ? 'TAX INVOICE' : 'INVOICE', 'Original for recipient', meta);
+
+  const lines: string[] = [];
+  const contact = [sale.customer.phone ? `Ph: ${sale.customer.phone}` : '', sale.customer.address || ''].filter(Boolean).join('   |   ');
+  if (contact) lines.push(contact);
+  const right: string[] = [];
+  if (sale.customer.gstin) right.push(`GSTIN: ${sale.customer.gstin}`, `State code: ${sale.customer.gstin.slice(0, 2)}`);
+  y = drawParty(doc, y, 'BILL TO', BRAND, sale.customer.name, lines, right);
+
+  // ── Items ──
+  const hasDisc = sale.items.some(i => i.discountPercent);
+  const hasHsn = sale.items.some(i => i.hsnCode);
+  const head = ['#', 'Description', ...(hasHsn ? ['HSN/SAC'] : []), 'Qty', 'Rate', ...(hasDisc ? ['Disc'] : []), 'Taxable', 'GST', 'Tax', 'Amount'];
+  const body = sale.items.map((it, idx) => [
+    idx + 1,
+    it.name,
+    ...(hasHsn ? [it.hsnCode || '-'] : []),
+    `${it.quantity} ${it.unitName}`,
+    formatCurrency(it.basePrice),
+    ...(hasDisc ? [it.discountPercent ? `${it.discountPercent}%` : '-'] : []),
+    formatCurrency(it.lineTaxableAmount),
+    `${it.gstPercentage}%`,
+    formatCurrency(it.lineGSTAmount),
+    formatCurrency(it.lineTotal),
   ]);
 
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
-  doc.addFileToVFS('NotoSans-Regular.ttf', NotoSansRegular);
-  doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
-  doc.addFileToVFS('NotoSans-Bold.ttf', NotoSansBold);
-  doc.addFont('NotoSans-Bold.ttf', 'NotoSans', 'bold');
-
-  const normal = () => doc.setFont('NotoSans', 'normal');
-  const bold   = () => doc.setFont('NotoSans', 'bold');
-
-  const W      = 210;
-  const M      = 12;   // margin
-  const CW     = W - M * 2; // content width = 186mm
-
-  const DARK:   [number, number, number] = [30, 41, 59];
-  const ACCENT: [number, number, number] = [79, 70, 229];
-  const LIGHT:  [number, number, number] = [248, 250, 252];
-  const BORDER: [number, number, number] = [210, 214, 220];
-
-  const isTaxInvoice = !!sale.customer.gstin;
-
-  // ─── HEADER BAND ────────────────────────────────────────────────────────────
-  doc.setFillColor(...DARK);
-  doc.rect(0, 0, W, 38, 'F');
-
-  // Accent strip at very top
-  doc.setFillColor(...ACCENT);
-  doc.rect(0, 0, W, 2, 'F');
-
-  // Business name
-  doc.setTextColor(255, 255, 255);
-  bold();
-  doc.setFontSize(14);
-  doc.text(BUSINESS_INFO.name, M, 13);
-
-  // Business details
-  normal();
-  doc.setFontSize(8);
-  doc.setTextColor(180, 190, 210);
-  const addrLine = [BUSINESS_INFO.address1, BUSINESS_INFO.address2].filter(Boolean).join(', ');
-  doc.text(addrLine, M, 19);
-  const contactParts = [
-    BUSINESS_INFO.phone ? `Ph: ${BUSINESS_INFO.phone}` : '',
-    BUSINESS_INFO.email || '',
-  ].filter(Boolean);
-  if (contactParts.length) doc.text(contactParts.join('   |   '), M, 24);
-  if (BUSINESS_INFO.gstin) {
-    doc.setTextColor(200, 210, 230);
-    bold();
-    doc.text(`GSTIN: ${BUSINESS_INFO.gstin}`, M, 29);
-  }
-
-  // Invoice type label (top-right)
-  doc.setTextColor(255, 255, 255);
-  bold();
-  doc.setFontSize(16);
-  doc.text(isTaxInvoice ? 'TAX INVOICE' : 'INVOICE', W - M, 13, { align: 'right' });
-
-  // Invoice meta (right column)
-  normal();
-  doc.setFontSize(8);
-  doc.setTextColor(180, 190, 210);
-  doc.text(`Invoice No:`, W - M - 42, 22);
-  doc.text(`Date:`,       W - M - 42, 28);
-
-  bold();
-  doc.setTextColor(240, 245, 255);
-  doc.setFontSize(8);
-  doc.text(sale.billNumber,                   W - M, 22, { align: 'right' });
-  doc.text(formatDate(new Date(sale.date)),   W - M, 28, { align: 'right' });
-
-  doc.setTextColor(0, 0, 0);
-
-  // ─── BILL TO ────────────────────────────────────────────────────────────────
-  const billY = 43;
-
-  doc.setFillColor(...LIGHT);
-  doc.setDrawColor(...BORDER);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(M, billY, CW, 26, 2, 2, 'FD');
-
-  // "BILL TO" label
-  bold();
-  doc.setFontSize(7);
-  doc.setTextColor(...ACCENT);
-  doc.text('BILL TO', M + 4, billY + 6);
-
-  // Customer name
-  bold();
-  doc.setFontSize(10);
-  doc.setTextColor(15, 20, 40);
-  doc.text(sale.customer.name, M + 4, billY + 12);
-
-  // Customer details
-  normal();
-  doc.setFontSize(8);
-  doc.setTextColor(70, 80, 100);
-  const custDetails: string[] = [];
-  if (sale.customer.phone)   custDetails.push(`Ph: ${sale.customer.phone}`);
-  if (sale.customer.address) custDetails.push(sale.customer.address);
-  doc.text(custDetails.join('   |   '), M + 4, billY + 18);
-
-  // Customer GSTIN (right)
-  if (sale.customer.gstin) {
-    bold();
-    doc.setFontSize(8);
-    doc.setTextColor(15, 20, 40);
-    doc.text(`GSTIN: ${sale.customer.gstin}`, W - M - 4, billY + 12, { align: 'right' });
-  }
-
-  doc.setTextColor(0, 0, 0);
-
-  // ─── ITEMS TABLE ─────────────────────────────────────────────────────────────
-  const tableStartY = billY + 30;
-
-  const tableData = sale.items.map((item, i) => {
-    const cgst = item.lineGSTAmount / 2;
-    const sgst = item.lineGSTAmount / 2;
-    return [
-      i + 1,
-      item.name,
-      item.unitName,
-      item.quantity,
-      formatCurrency(item.basePrice),
-      `${item.gstPercentage}%`,
-      formatCurrency(cgst),
-      formatCurrency(sgst),
-      formatCurrency(item.lineTotal),
-    ];
-  });
+  const colStyles: Record<number, { cellWidth?: number | 'auto'; halign?: 'left' | 'center' | 'right' }> = {};
+  let c = 0;
+  colStyles[c++] = { cellWidth: 7, halign: 'center' };
+  colStyles[c++] = { cellWidth: 'auto' };
+  if (hasHsn) colStyles[c++] = { cellWidth: 16, halign: 'center' };
+  colStyles[c++] = { cellWidth: 17, halign: 'center' };
+  colStyles[c++] = { cellWidth: 20, halign: 'right' };
+  if (hasDisc) colStyles[c++] = { cellWidth: 11, halign: 'center' };
+  colStyles[c++] = { cellWidth: 22, halign: 'right' };
+  colStyles[c++] = { cellWidth: 11, halign: 'center' };
+  colStyles[c++] = { cellWidth: 19, halign: 'right' };
+  colStyles[c++] = { cellWidth: 23, halign: 'right' };
 
   autoTable(doc, {
-    startY: tableStartY,
-    head: [['#', 'Description', 'Unit', 'Qty', 'Unit Rate', 'GST %', 'CGST', 'SGST', 'Amount']],
-    body: tableData,
+    startY: y,
+    head: [head],
+    body,
     theme: 'grid',
-    headStyles: {
-      fillColor: DARK,
-      textColor: [255, 255, 255],
-      font: 'NotoSans',
-      fontStyle: 'bold',
-      fontSize: 8,
-      cellPadding: { top: 3, bottom: 3, left: 2, right: 2 },
-      halign: 'center',
-    },
-    bodyStyles: {
-      font: 'NotoSans',
-      fontStyle: 'normal',
-      fontSize: 8,
-      cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
-      textColor: [25, 30, 50],
-    },
-    alternateRowStyles: { fillColor: [245, 247, 250] },
-    styles: { lineColor: BORDER, lineWidth: 0.25 },
-    columnStyles: {
-      0: { cellWidth: 7,  halign: 'center' },
-      1: { cellWidth: 'auto' },
-      2: { cellWidth: 13, halign: 'center' },
-      3: { cellWidth: 10, halign: 'center' },
-      4: { cellWidth: 21, halign: 'right'  },
-      5: { cellWidth: 10, halign: 'center' },
-      6: { cellWidth: 20, halign: 'right'  },
-      7: { cellWidth: 20, halign: 'right'  },
-      8: { cellWidth: 21, halign: 'right'  },
-    },
-    margin: { left: M, right: M },
+    headStyles: { fillColor: INK, textColor: [255, 255, 255], font: 'NotoSans', fontStyle: 'bold', fontSize: 7.5, halign: 'center', cellPadding: 2.2 },
+    bodyStyles: { font: 'NotoSans', fontStyle: 'normal', fontSize: 7.8, textColor: [25, 32, 40], cellPadding: 2 },
+    alternateRowStyles: { fillColor: [247, 249, 250] },
+    styles: { lineColor: BORDER, lineWidth: 0.25, overflow: 'linebreak' },
+    columnStyles: colStyles,
+    margin: { left: M, right: M, top: 15 },
   });
+  y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 5;
 
-  const docAT = doc as unknown as { lastAutoTable: { finalY: number } };
-  const afterTable = docAT.lastAutoTable ? docAT.lastAutoTable.finalY : tableStartY + 30;
+  // ── Tax summary (left) + totals (right) ──
+  const groups: Record<number, { taxable: number; gst: number }> = {};
+  sale.items.forEach(i => {
+    const g = (groups[i.gstPercentage] ||= { taxable: 0, gst: 0 });
+    g.taxable += i.lineTaxableAmount;
+    g.gst += i.lineGSTAmount;
+  });
+  const rates = Object.keys(groups).map(Number).sort((a, b) => a - b);
 
-  // ─── SUMMARY BOX ─────────────────────────────────────────────────────────────
-  const finalTotal = sale.finalTotal ?? Math.floor(sale.grandTotal);
-  const roundOff   = sale.roundOff   ?? (finalTotal - sale.grandTotal);
+  const rows: [string, string][] = [['Taxable value', money(sale.totalTaxableAmount)]];
+  rates.forEach(r => {
+    if (r === 0) return;
+    if (inter) rows.push([`IGST @ ${r}%`, money(groups[r].gst)]);
+    else {
+      rows.push([`CGST @ ${r / 2}%`, money(groups[r].gst / 2)]);
+      rows.push([`SGST @ ${r / 2}%`, money(groups[r].gst / 2)]);
+    }
+  });
+  if (Math.abs(roundOff) >= 0.01) rows.push(['Round off', `${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}`]);
 
-  const SUM_W = 76;
-  const SUM_X = W - M - SUM_W;
-  const GAP   = afterTable + 5;
+  const pending = sale.pendingAmount || 0;
+  const SUM_W = 78;
+  const SUM_X = PAGE_W - M - SUM_W;
+  const ROW_H = 6;
+  const boxH = rows.length * ROW_H + 4 + 10 + (pending > 0 || sale.paidAmount ? 13 : 0);
+  y = ensureSpace(doc, y, boxH + 6);
+  const top = y;
 
-  // Group items by GST rate for CGST/SGST breakdown
-  const gstGroups: Record<number, { taxable: number; gst: number }> = {};
-  for (const item of sale.items) {
-    if (!gstGroups[item.gstPercentage]) gstGroups[item.gstPercentage] = { taxable: 0, gst: 0 };
-    gstGroups[item.gstPercentage].taxable += item.lineTaxableAmount;
-    gstGroups[item.gstPercentage].gst     += item.lineGSTAmount;
-  }
-
-  const summaryRows: [string, string][] = [
-    ['Taxable Amount', formatCurrency(sale.totalTaxableAmount)],
-  ];
-
-  // Per-rate CGST + SGST rows (sorted by rate)
-  for (const rate of Object.keys(gstGroups).map(Number).sort((a, b) => a - b)) {
-    if (rate === 0) continue;
-    const half     = rate / 2;
-    const cgstAmt  = gstGroups[rate].gst / 2;
-    const sgstAmt  = gstGroups[rate].gst / 2;
-    summaryRows.push([`CGST @ ${half}%`, formatCurrency(cgstAmt)]);
-    summaryRows.push([`SGST @ ${half}%`, formatCurrency(sgstAmt)]);
-  }
-
-  summaryRows.push(['Total GST', formatCurrency(sale.totalGSTAmount)]);
-
-  if (Math.abs(roundOff) >= 0.01) {
-    summaryRows.push(['Round Off', `${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}`]);
-  }
-
-  const ROW_H     = 6.5;
-  const TOTAL_H   = 9;
-  const BOX_H     = summaryRows.length * ROW_H + 4 + TOTAL_H + 2;
-
-  // Outer box
   doc.setFillColor(...LIGHT);
   doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
-  doc.roundedRect(SUM_X, GAP, SUM_W, BOX_H, 2, 2, 'FD');
-
-  // Summary rows
-  let rY = GAP + 6;
-  for (const [label, value] of summaryRows) {
-    normal();
-    doc.setFontSize(8.5);
-    doc.setTextColor(80, 90, 110);
-    doc.text(label, SUM_X + 4, rY);
-    doc.setTextColor(20, 25, 45);
-    doc.text(value, SUM_X + SUM_W - 4, rY, { align: 'right' });
-    rY += ROW_H;
-  }
-
-  // Divider
-  doc.setDrawColor(...BORDER);
-  doc.setLineWidth(0.4);
-  doc.line(SUM_X + 2, rY - 1, SUM_X + SUM_W - 2, rY - 1);
-  rY += 1;
-
-  // NET PAYABLE row (dark fill inside rounded box — flat top, rounded bottom)
-  doc.setFillColor(...DARK);
-  doc.rect(SUM_X, rY, SUM_W, TOTAL_H, 'F');
-  // re-draw rounded bottom corners by overdrawing with filled roundedRect
-  doc.roundedRect(SUM_X, rY, SUM_W, TOTAL_H + 2, 2, 2, 'F');
-
-  bold();
-  doc.setFontSize(9);
+  doc.roundedRect(SUM_X, top, SUM_W, boxH, 2, 2, 'FD');
+  let ry = top + 5.5;
+  doc.setFontSize(8.3);
+  rows.forEach(([l, v]) => {
+    normal(doc); doc.setTextColor(...MUTED); doc.text(l, SUM_X + 4, ry);
+    doc.setTextColor(...INK); doc.text(v, SUM_X + SUM_W - 4, ry, { align: 'right' });
+    ry += ROW_H;
+  });
+  ry -= 1;
+  doc.setFillColor(...INK);
+  doc.rect(SUM_X, ry, SUM_W, 10, 'F');
+  bold(doc);
+  doc.setFontSize(9.5);
   doc.setTextColor(255, 255, 255);
-  doc.text('NET PAYABLE', SUM_X + 4, rY + 6);
-  doc.text(formatCurrency(finalTotal), SUM_X + SUM_W - 4, rY + 6, { align: 'right' });
+  doc.text('Invoice total', SUM_X + 4, ry + 6.6);
+  doc.text(money(finalTotal), SUM_X + SUM_W - 4, ry + 6.6, { align: 'right' });
+  ry += 10;
+  if (pending > 0 || sale.paidAmount) {
+    doc.setFontSize(8.3);
+    normal(doc); doc.setTextColor(...MUTED); doc.text('Received', SUM_X + 4, ry + 5);
+    doc.setTextColor(20, 110, 70); doc.text(money(sale.paidAmount || 0), SUM_X + SUM_W - 4, ry + 5, { align: 'right' });
+    bold(doc); doc.setTextColor(pending > 0 ? 160 : 20, pending > 0 ? 90 : 110, pending > 0 ? 10 : 70);
+    doc.text(pending > 0 ? 'Balance due' : 'Fully paid', SUM_X + 4, ry + 10.5);
+    doc.text(money(pending), SUM_X + SUM_W - 4, ry + 10.5, { align: 'right' });
+  }
 
-  doc.setTextColor(0, 0, 0);
+  // Left column: amount in words, GST summary, bank
+  const LW = SUM_X - M - 6;
+  let ly = top;
+  bold(doc); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+  doc.text('Amount in words', M, ly + 3);
+  normal(doc); doc.setFontSize(8.3); doc.setTextColor(...INK);
+  const words = doc.splitTextToSize(numberToWords(finalTotal), LW) as string[];
+  doc.text(words, M, ly + 8);
+  ly += 8 + words.length * 4 + 2;
 
-  // ─── AMOUNT IN WORDS ─────────────────────────────────────────────────────────
-  const wordsX = M;
-  const wordsY = GAP + 4;
-  const wordsMaxW = SUM_X - M - 6;
+  if (isTaxInvoice && rates.some(r => r > 0)) {
+    autoTable(doc, {
+      startY: ly,
+      head: [inter ? ['GST %', 'Taxable', 'IGST', 'Total tax'] : ['GST %', 'Taxable', 'CGST', 'SGST', 'Total tax']],
+      body: rates.map(r => inter
+        ? [`${r}%`, formatCurrency(groups[r].taxable), formatCurrency(groups[r].gst), formatCurrency(groups[r].gst)]
+        : [`${r}%`, formatCurrency(groups[r].taxable), formatCurrency(groups[r].gst / 2), formatCurrency(groups[r].gst / 2), formatCurrency(groups[r].gst)]),
+      theme: 'grid',
+      headStyles: { fillColor: [232, 238, 241], textColor: INK, font: 'NotoSans', fontStyle: 'bold', fontSize: 7, halign: 'center', cellPadding: 1.4 },
+      bodyStyles: { font: 'NotoSans', fontSize: 7, halign: 'right', cellPadding: 1.4, textColor: [40, 50, 58] },
+      columnStyles: { 0: { halign: 'center' } },
+      styles: { lineColor: BORDER, lineWidth: 0.2 },
+      margin: { left: M, right: PAGE_W - M - LW },
+      tableWidth: LW,
+    });
+    ly = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 4;
+  }
 
-  doc.setFontSize(8);
-  bold();
-  doc.setTextColor(60, 70, 90);
-  doc.text('Amount in Words', wordsX, wordsY);
+  const bank: string[] = [];
+  if (s.bankName || s.accountNumber) {
+    if (s.accountName) bank.push(`A/c name: ${s.accountName}`);
+    if (s.bankName) bank.push(`Bank: ${s.bankName}`);
+    if (s.accountNumber) bank.push(`A/c no: ${s.accountNumber}${s.ifsc ? `   IFSC: ${s.ifsc.toUpperCase()}` : ''}`);
+  }
+  if (s.upiId) bank.push(`UPI: ${s.upiId}`);
+  if (bank.length) {
+    bold(doc); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+    doc.text('Payment details', M, ly + 3);
+    normal(doc); doc.setFontSize(7.8); doc.setTextColor(...INK);
+    bank.forEach((l, i) => doc.text(l, M, ly + 7.5 + i * 4));
+    ly += 7.5 + bank.length * 4;
+  }
 
-  doc.setDrawColor(...BORDER);
-  doc.setLineWidth(0.3);
-  doc.setFillColor(...LIGHT);
-  const wordsText = numberToWords(finalTotal);
-  const wrapped = doc.splitTextToSize(wordsText, wordsMaxW - 8);
-  const wordsBoxH = wrapped.length * 5 + 8;
-  doc.roundedRect(wordsX, wordsY + 2, wordsMaxW, wordsBoxH, 2, 2, 'FD');
-  normal();
-  doc.setFontSize(8.5);
-  doc.setTextColor(20, 30, 55);
-  doc.text(wrapped, wordsX + 4, wordsY + 8);
+  y = Math.max(top + boxH, ly) + 6;
 
-  doc.setTextColor(0, 0, 0);
+  if (sale.notes) {
+    const nl = doc.splitTextToSize(sale.notes, CW) as string[];
+    y = ensureSpace(doc, y, nl.length * 4 + 8);
+    bold(doc); doc.setFontSize(7.5); doc.setTextColor(...MUTED);
+    doc.text('Notes', M, y);
+    normal(doc); doc.setFontSize(8); doc.setTextColor(...INK);
+    doc.text(nl, M, y + 4.5);
+    y += nl.length * 4 + 7;
+  }
 
-  // ─── FOOTER ──────────────────────────────────────────────────────────────────
-  const footerY = Math.max(GAP + BOX_H + 10, wordsY + wordsBoxH + 10);
-
-  // Separator
-  doc.setDrawColor(...BORDER);
-  doc.setLineWidth(0.4);
-  doc.line(M, footerY, W - M, footerY);
-
-  // Terms (left)
-  bold();
-  doc.setFontSize(8);
-  doc.setTextColor(40, 50, 70);
-  doc.text('Terms & Conditions:', M, footerY + 6);
-  normal();
-  doc.setFontSize(7.5);
-  doc.setTextColor(80, 90, 110);
-  doc.text('1. Goods once sold will not be taken back or exchanged.', M, footerY + 11);
-  doc.text('2. All disputes are subject to local jurisdiction only.', M, footerY + 16);
-
-  // Signature block (right)
-  doc.setDrawColor(140, 150, 170);
-  doc.setLineWidth(0.4);
-  doc.line(W - M - 48, footerY + 20, W - M, footerY + 20);
-  bold();
-  doc.setFontSize(8);
-  doc.setTextColor(40, 50, 70);
-  doc.text(`For ${BUSINESS_INFO.name}`, W - M, footerY + 9, { align: 'right' });
-  normal();
-  doc.setFontSize(7.5);
-  doc.setTextColor(80, 90, 110);
-  doc.text('Authorised Signatory', W - M, footerY + 24, { align: 'right' });
-
-  // Bottom note
-  doc.setFillColor(245, 246, 250);
-  doc.rect(0, footerY + 28, W, 12, 'F');
-  doc.setFontSize(7.5);
-  normal();
-  doc.setTextColor(120, 130, 150);
-  doc.text('This is a computer-generated invoice and does not require a physical signature.', W / 2, footerY + 33, { align: 'center' });
-  doc.setTextColor(...ACCENT);
-  bold();
-  doc.text('Thank you for your business!', W / 2, footerY + 37, { align: 'center' });
+  const terms = (s.invoiceTerms || '').split('\n').map(t => t.trim()).filter(Boolean);
+  drawFooter(doc, y, s, terms, 'This is a computer-generated invoice.', 'Thank you for your business!', BRAND);
+  addPageNumbers(doc, sale.billNumber);
 
   return doc.output('blob');
 }

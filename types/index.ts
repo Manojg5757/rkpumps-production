@@ -13,6 +13,7 @@ export type Supplier = {
   name: string;
   phone?: string;
   address?: string;
+  gstin?: string;
   createdAt: Date;
 };
 
@@ -40,24 +41,31 @@ export type Product = {
   supplierName?: string;
   gstPercentage: number;
   lowStockThreshold: number;
+  hsnCode?: string;
+  itemCode?: string;      // your own code / SKU, e.g. BW-SP-001
+  isService?: boolean;    // labour / service item — billed without stock
   updatedAt: Date;
 };
 
 export type CartItem = {
-  productId: string;
+  productId: string;      // product id, or "svc-…" for service / labour lines
   name: string;
   unitName: string;
   quantity: number;
-  basePrice: number;
-  purchasePrice: number; // capture at time of sale
+  basePrice: number;      // rate per unit excl. GST (before discount)
+  purchasePrice: number;  // cost captured at time of sale
   gstPercentage: number;
   gstAmountPerUnit: number;
   lineTaxableAmount: number;
   lineGSTAmount: number;
   lineTotal: number;
+  hsnCode?: string;
+  discountPercent?: number;
+  isService?: boolean;    // labour / service charge — no stock movement
 };
 
 export type PaymentStatus = 'paid' | 'partial' | 'unpaid';
+export type PaymentMethod = 'Cash' | 'UPI' | 'Bank' | 'Cheque';
 
 export type Sale = {
   id: string;
@@ -74,11 +82,15 @@ export type Sale = {
   totalTaxableAmount: number;
   totalGSTAmount: number;
   grandTotal: number;    // raw sum before rounding
-  roundOff?: number;     // finalTotal - grandTotal (positive or negative)
-  finalTotal?: number;   // Math.round(grandTotal) — the amount customer actually pays
+  roundOff?: number;     // finalTotal - grandTotal
+  finalTotal?: number;   // amount customer actually pays
   paidAmount: number;
   pendingAmount: number;
   paymentStatus: PaymentStatus;
+  isInterState?: boolean;   // IGST instead of CGST+SGST
+  placeOfSupply?: string;   // e.g. "33-Tamil Nadu"
+  notes?: string;
+  quotationId?: string;
 };
 
 export type Payment = {
@@ -86,7 +98,7 @@ export type Payment = {
   invoiceId: string;
   customerId: string;
   amount: number;
-  method: 'Cash' | 'UPI' | 'Bank';
+  method: PaymentMethod;
   note?: string;
   createdAt: Date;
 };
@@ -120,8 +132,10 @@ export type QuotationItem = {
   name: string;
   unitName: string;
   quantity: number;
-  unitPrice: number;  // basePrice * (1 + gstPercentage/100) — GST baked in, never shown separately
+  unitPrice: number;  // price incl. GST — GST is never shown separately on a quotation
   lineTotal: number;  // unitPrice * quantity
+  isService?: boolean;
+  gstPercentage?: number; // remembered so the quote can be converted to an invoice
 };
 
 export type Quotation = {
@@ -136,4 +150,25 @@ export type Quotation = {
   items: QuotationItem[];
   grandTotal: number;
   validDays: number;
+  notes?: string;
+  status?: 'open' | 'converted';
+  convertedInvoiceId?: string;
+  convertedBillNumber?: string;
+};
+
+export type BusinessSettings = {
+  name: string;
+  address1: string;
+  address2: string;
+  phone: string;
+  email: string;
+  gstin: string;
+  stateCode: string;      // 2-digit GST state code, e.g. "33"
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  ifsc: string;
+  upiId: string;
+  invoiceTerms: string;   // one term per line
+  quotationTerms: string; // one term per line
 };

@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle } from "lucide-react";
+import { Modal } from "./Modal";
 
 interface ConfirmModalProps {
   title: string;
@@ -9,34 +10,30 @@ interface ConfirmModalProps {
   onCancel: () => void;
   confirmText?: string;
   cancelText?: string;
+  tone?: "danger" | "primary";
 }
 
-export function ConfirmModal({ title, message, onConfirm, onCancel, confirmText = "Confirm", cancelText = "Cancel" }: ConfirmModalProps) {
+export function ConfirmModal({ title, message, onConfirm, onCancel, confirmText = "Confirm", cancelText = "Cancel", tone = "danger" }: ConfirmModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        <div className="p-5 flex flex-col items-center text-center">
-          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4">
-            <AlertTriangle className="text-red-600" size={24} />
-          </div>
-          <h2 className="text-lg font-bold text-gray-900 mb-2">{title}</h2>
-          <p className="text-sm text-gray-500 mb-6">{message}</p>
-          <div className="flex gap-3 w-full">
-            <button 
-              onClick={onCancel}
-              className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
-            >
-              {cancelText}
-            </button>
-            <button 
-              onClick={onConfirm}
-              className="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors"
-            >
-              {confirmText}
-            </button>
-          </div>
+    <Modal
+      title={title}
+      onClose={onCancel}
+      size="sm"
+      footer={
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="btn-secondary flex-1">{cancelText}</button>
+          <button onClick={onConfirm} className={`${tone === "danger" ? "btn-danger" : "btn-primary"} flex-1`}>{confirmText}</button>
         </div>
+      }
+    >
+      <div className="flex gap-3 items-start">
+        {tone === "danger" && (
+          <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+            <AlertTriangle className="text-red-600" size={20} />
+          </div>
+        )}
+        <p className="text-sm text-ink-2 pt-2">{message}</p>
       </div>
-    </div>
+    </Modal>
   );
 }

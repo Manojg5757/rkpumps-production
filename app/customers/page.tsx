@@ -1,421 +1,366 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { getCustomers, getSales, getSalesByCustomer, getPayments } from "../../lib/db";
-import { Customer, Sale, Payment } from "../../types";
-import { generateBillPDF } from "../../lib/pdf";
-import { Users, X, Phone, MapPin, FileText, Download, TrendingUp, ChevronDown, ChevronUp } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
+import { BellRing, Pencil, Phone, Plus, Receipt, Users, MapPin } from "lucide-react";
+import Link from "next/link";
+import { getCustomers, getSales, getPayments, addCustomer, updateCustomer } from "../../lib/db";
+import { getSettings } from "../../lib/settings";
+import { Customer, Sale, Payment } from "../../types";
 import { AddPaymentModal } from "../../components/sales/AddPaymentModal";
+import { InvoiceDetailModal } from "../../components/sales/InvoiceDetailModal";
+import { Modal } from "../../components/ui/Modal";
+import { EmptyState, Loading, PageHeader, SearchInput, Stat, StatusBadge, inr, inr2 } from "../../components/ui/Common";
+import { daysSince, saleTotal } from "../../lib/gst";
+import { formatDate, isValidGstin } from "../../lib/utils";
+import { openWhatsApp, reminderMessage } from "../../lib/share";
 
-type SortKey = 'totalPurchase' | 'totalPending' | 'invoiceCount' | 'name';
-type SortDir = 'asc' | 'desc';
-type FilterMode = 'all' | 'pending' | 'paid';
-
-interface CustomerStats {
-  totalPurchase: number;
-  totalPaid: number;
-  totalPending: number;
-  invoiceCount: number;
-}
+type SortKey = "totalPurchase" | "totalPending" | "recent" | "name";
+type FilterMode = "all" | "pending" | "paid";
+interface Stats { totalPurchase: number; totalPaid: number; totalPending: number; invoiceCount: number; lastDate: number; oldestDue: number }
+const EMPTY: Stats = { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0, lastDate: 0, oldestDue: 0 };
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [statsMap, setStatsMap] = useState<Record<string, CustomerStats>>({});
+  const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>('totalPurchase');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [filterMode, setFilterMode] = useState<FilterMode>('all');
+  const [sortKey, setSortKey] = useState<SortKey>("totalPurchase");
+  const [filterMode, setFilterMode] = useState<FilterMode>("all");
 
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [customerSales, setCustomerSales] = useState<Sale[]>([]);
-  const [customerPayments, setCustomerPayments] = useState<Payment[]>([]);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-
-  const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [selected, setSelected] = useState<Customer | null>(null);
+  const [editing, setEditing] = useState<Customer | "new" | null>(null);
 
   const loadData = async () => {
     try {
       const [custs, allSales] = await Promise.all([getCustomers(), getSales()]);
       setCustomers(custs);
-
-      // Aggregate sales per customer
-      const map: Record<string, CustomerStats> = {};
-      allSales.forEach(sale => {
-        if (!map[sale.customerId]) {
-          map[sale.customerId] = { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0 };
-        }
-        map[sale.customerId].totalPurchase += sale.grandTotal;
-        map[sale.customerId].totalPaid += sale.paidAmount || 0;
-        map[sale.customerId].totalPending += sale.pendingAmount || 0;
-        map[sale.customerId].invoiceCount += 1;
-      });
-      setStatsMap(map);
-    } catch (error) {
-      toast.error("Failed to load customers");
+      setSales(allSales);
+    } catch {
+      toast.error("Could not load customers");
     } finally {
       setLoading(false);
     }
   };
 
-  const openLedger = async (customer: Customer) => {
-    setSelectedCustomer(customer);
-    setLedgerLoading(true);
-    try {
-      const [sales, payments] = await Promise.all([
-        getSalesByCustomer(customer.id),
-        getPayments(customer.id)
-      ]);
-      setCustomerSales(sales);
-      setCustomerPayments(payments);
-    } catch (error) {
-      toast.error("Failed to load customer ledger");
-    } finally {
-      setLedgerLoading(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("filter") === "pending") {
+      setFilterMode("pending");
+      setSortKey("totalPending");
     }
-  };
+    loadData();
+  }, []);
 
-  const handleDownloadInvoice = async (sale: Sale) => {
-    const pdfBlob = await generateBillPDF(sale);
-    const url = URL.createObjectURL(pdfBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${sale.billNumber}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortKey(key);
-      setSortDir('desc');
-    }
-  };
-
-  const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col) return <ChevronDown size={13} className="text-gray-400 inline ml-1" />;
-    return sortDir === 'desc'
-      ? <ChevronDown size={13} className="text-indigo-500 inline ml-1" />
-      : <ChevronUp size={13} className="text-indigo-500 inline ml-1" />;
-  };
+  const statsMap = useMemo(() => {
+    const map: Record<string, Stats> = {};
+    sales.forEach(s => {
+      const m = (map[s.customerId] ||= { ...EMPTY });
+      const t = new Date(s.date).getTime();
+      m.totalPurchase += saleTotal(s);
+      m.totalPaid += s.paidAmount || 0;
+      m.totalPending += s.pendingAmount || 0;
+      m.invoiceCount += 1;
+      m.lastDate = Math.max(m.lastDate, t);
+      if ((s.pendingAmount || 0) > 0) m.oldestDue = m.oldestDue ? Math.min(m.oldestDue, t) : t;
+    });
+    return map;
+  }, [sales]);
 
   const displayed = useMemo(() => {
-    let list = customers.filter(c => {
-      const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search);
-      const stats = statsMap[c.id] || { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0 };
-      const matchFilter =
-        filterMode === 'all' ||
-        (filterMode === 'pending' && stats.totalPending > 0) ||
-        (filterMode === 'paid' && stats.totalPending === 0 && stats.invoiceCount > 0);
-      return matchSearch && matchFilter;
-    });
+    const q = search.toLowerCase();
+    return customers
+      .filter(c => {
+        const st = statsMap[c.id] || EMPTY;
+        const match = c.name.toLowerCase().includes(q) || c.phone.includes(q) || (c.address || "").toLowerCase().includes(q);
+        const f = filterMode === "all" || (filterMode === "pending" && st.totalPending > 0) || (filterMode === "paid" && st.totalPending <= 0 && st.invoiceCount > 0);
+        return match && f;
+      })
+      .sort((a, b) => {
+        const sa = statsMap[a.id] || EMPTY, sb = statsMap[b.id] || EMPTY;
+        if (sortKey === "name") return a.name.localeCompare(b.name);
+        if (sortKey === "recent") return sb.lastDate - sa.lastDate;
+        if (sortKey === "totalPending") return sb.totalPending - sa.totalPending;
+        return sb.totalPurchase - sa.totalPurchase;
+      });
+  }, [customers, statsMap, search, sortKey, filterMode]);
 
-    list = [...list].sort((a, b) => {
-      const sa = statsMap[a.id] || { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0 };
-      const sb = statsMap[b.id] || { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0 };
-      let diff = 0;
-      if (sortKey === 'name') diff = a.name.localeCompare(b.name);
-      else if (sortKey === 'totalPurchase') diff = sa.totalPurchase - sb.totalPurchase;
-      else if (sortKey === 'totalPending') diff = sa.totalPending - sb.totalPending;
-      else if (sortKey === 'invoiceCount') diff = sa.invoiceCount - sb.invoiceCount;
-      return sortDir === 'desc' ? -diff : diff;
-    });
-
-    return list;
-  }, [customers, statsMap, search, sortKey, sortDir, filterMode]);
-
-  const overallTotal = Object.values(statsMap).reduce((s, v) => s + v.totalPurchase, 0);
-  const overallPending = Object.values(statsMap).reduce((s, v) => s + v.totalPending, 0);
-  const pendingCount = Object.values(statsMap).filter(v => v.totalPending > 0).length;
-
-  const ledgerTotalInvoiced = customerSales.reduce((s, sale) => s + sale.grandTotal, 0);
-  const ledgerTotalPaid = customerSales.reduce((s, sale) => s + (sale.paidAmount || 0), 0);
-  const ledgerPending = customerSales.reduce((s, sale) => s + (sale.pendingAmount || 0), 0);
-
-  type LedgerEntry = { date: Date; type: 'invoice' | 'payment'; amount: number; label: string; sale?: Sale };
-  const ledgerEntries: LedgerEntry[] = [
-    ...customerSales.map(s => ({ date: new Date(s.date), type: 'invoice' as const, amount: s.grandTotal, label: s.billNumber, sale: s })),
-    ...customerPayments.map(p => ({ date: new Date(p.createdAt), type: 'payment' as const, amount: p.amount, label: p.method })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime());
+  const all = Object.values(statsMap);
+  const overallTotal = all.reduce((s, v) => s + v.totalPurchase, 0);
+  const overallPending = all.reduce((s, v) => s + v.totalPending, 0);
+  const pendingCount = all.filter(v => v.totalPending > 0).length;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Users size={24} className="text-indigo-600" />
-          Customers
-        </h1>
-        <div className="text-sm text-gray-500">{customers.length} total customers</div>
+    <div>
+      <PageHeader
+        title="Customers"
+        subtitle={`${customers.length} customers`}
+        actions={<button className="btn-primary" onClick={() => setEditing("new")}><Plus size={18} /><span className="hidden sm:inline">Add customer</span></button>}
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+        <Stat label="Total business" value={inr(overallTotal)} sub={`${customers.length} customers`} />
+        <Stat label="To collect" value={inr(overallPending)} sub={`${pendingCount} customers with dues`} tone={overallPending > 0 ? "warn" : "default"} />
+        <div className="col-span-2 lg:col-span-1"><Stat label="Collected" value={inr(overallTotal - overallPending)} tone="good" /></div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl">
-          <p className="text-xs text-indigo-700 font-medium">Total Business</p>
-          <p className="text-2xl font-bold text-indigo-900">₹{overallTotal.toLocaleString('en-IN')}</p>
-          <p className="text-xs text-indigo-600 mt-1">{customers.length} customers</p>
-        </div>
-        <div className={`border p-4 rounded-xl ${overallPending > 0 ? 'bg-amber-50 border-amber-100' : 'bg-gray-50 border-gray-200'}`}>
-          <p className={`text-xs font-medium ${overallPending > 0 ? 'text-amber-700' : 'text-gray-600'}`}>Total Pending</p>
-          <p className={`text-2xl font-bold ${overallPending > 0 ? 'text-amber-900' : 'text-gray-700'}`}>₹{overallPending.toLocaleString('en-IN')}</p>
-          <p className={`text-xs mt-1 ${overallPending > 0 ? 'text-amber-600' : 'text-gray-500'}`}>{pendingCount} customers with dues</p>
-        </div>
-        <div className="bg-green-50 border border-green-100 p-4 rounded-xl col-span-2 md:col-span-1">
-          <p className="text-xs text-green-700 font-medium">Total Collected</p>
-          <p className="text-2xl font-bold text-green-900">₹{(overallTotal - overallPending).toLocaleString('en-IN')}</p>
-        </div>
-      </div>
-
-      {/* Search + Filter + Sort */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col md:flex-row gap-3 items-start md:items-center">
-        <input
-          type="text"
-          placeholder="Search by name or phone..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="flex-1 border border-gray-300 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-        />
-        <div className="flex gap-2 flex-wrap">
-          {(['all', 'pending', 'paid'] as FilterMode[]).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilterMode(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                filterMode === f
-                  ? 'bg-indigo-600 text-white border-indigo-600'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
-              }`}
-            >
-              {f === 'all' ? 'All Customers' : f === 'pending' ? 'With Dues' : 'Fully Paid'}
+      <div className="space-y-2.5 mb-4">
+        <SearchInput value={search} onChange={setSearch} placeholder="Search name, phone or place" />
+        <div className="flex gap-2 overflow-x-auto no-scrollbar items-center">
+          {(["all", "pending", "paid"] as FilterMode[]).map(f => (
+            <button key={f} onClick={() => setFilterMode(f)} className={filterMode === f ? "chip-active" : "chip"}>
+              {f === "all" ? "All" : f === "pending" ? "With dues" : "Paid up"}
             </button>
           ))}
+          <span className="w-px h-6 bg-line mx-1 shrink-0" />
+          <select value={sortKey} onChange={e => setSortKey(e.target.value as SortKey)} className="h-9 rounded-full border border-line bg-white px-3 text-[13px] font-medium text-ink-2">
+            <option value="totalPurchase">Top buyers</option>
+            <option value="totalPending">Highest dues</option>
+            <option value="recent">Recently billed</option>
+            <option value="name">Name A–Z</option>
+          </select>
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Loading customers...</div>
+      {loading ? <Loading text="Loading customers…" /> : displayed.length === 0 ? (
+        <div className="card"><EmptyState icon={Users} title="No customers found" text="Customers are added automatically when you save an invoice." /></div>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 text-sm">
-                  <th className="p-4">
-                    <button onClick={() => handleSort('name')} className="flex items-center font-medium hover:text-indigo-600">
-                      Customer <SortIcon col="name" />
-                    </button>
-                  </th>
-                  <th className="p-4 font-medium">Phone</th>
-                  <th className="p-4">
-                    <button onClick={() => handleSort('invoiceCount')} className="flex items-center font-medium hover:text-indigo-600">
-                      Invoices <SortIcon col="invoiceCount" />
-                    </button>
-                  </th>
-                  <th className="p-4">
-                    <button onClick={() => handleSort('totalPurchase')} className="flex items-center font-medium hover:text-indigo-600">
-                      Total Purchase <SortIcon col="totalPurchase" />
-                    </button>
-                  </th>
-                  <th className="p-4 font-medium text-right">Paid</th>
-                  <th className="p-4">
-                    <button onClick={() => handleSort('totalPending')} className="flex items-center font-medium hover:text-indigo-600 ml-auto">
-                      Pending <SortIcon col="totalPending" />
-                    </button>
-                  </th>
-                  <th className="p-4 text-center font-medium">Ledger</th>
-                </tr>
-              </thead>
-              <tbody>
-                {displayed.map((c, idx) => {
-                  const stats = statsMap[c.id] || { totalPurchase: 0, totalPaid: 0, totalPending: 0, invoiceCount: 0 };
-                  const isTop3 = sortKey === 'totalPurchase' && sortDir === 'desc' && idx < 3;
-                  return (
-                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-gray-50 ${isTop3 ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="p-4">
-                        <div className="flex items-center gap-2">
-                          {isTop3 && (
-                            <span className={`w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center ${
-                              idx === 0 ? 'bg-yellow-400 text-yellow-900' :
-                              idx === 1 ? 'bg-gray-300 text-gray-700' :
-                              'bg-amber-600/70 text-white'
-                            }`}>{idx + 1}</span>
-                          )}
-                          <div>
-                            <p className="font-medium text-gray-900">{c.name}</p>
-                            {c.address && <p className="text-xs text-gray-400">{c.address}</p>}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-4 text-gray-600 text-sm">
-                        <span className="flex items-center gap-1"><Phone size={13} className="text-gray-400" />{c.phone}</span>
-                      </td>
-                      <td className="p-4 text-gray-700 text-sm">{stats.invoiceCount || '-'}</td>
-                      <td className="p-4 font-semibold text-indigo-700">
-                        {stats.totalPurchase > 0 ? `₹${stats.totalPurchase.toLocaleString('en-IN')}` : '-'}
-                      </td>
-                      <td className="p-4 text-right text-green-700 font-medium text-sm">
-                        {stats.totalPaid > 0 ? `₹${stats.totalPaid.toLocaleString('en-IN')}` : '-'}
-                      </td>
-                      <td className="p-4 text-right">
-                        {stats.totalPending > 0 ? (
-                          <span className="font-bold text-amber-700">₹{stats.totalPending.toLocaleString('en-IN')}</span>
-                        ) : stats.invoiceCount > 0 ? (
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Cleared</span>
-                        ) : '-'}
-                      </td>
-                      <td className="p-4 text-center">
-                        <button
-                          onClick={() => openLedger(c)}
-                          className="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 mx-auto"
-                        >
-                          <FileText size={15} /> View
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {displayed.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-gray-500">No customers found.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {displayed.length > 0 && (
-            <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-500 flex items-center gap-1">
-              <TrendingUp size={12} /> Showing {displayed.length} of {customers.length} customers
-            </div>
-          )}
-        </div>
+        <ul className="card divide-y divide-line">
+          {displayed.map(c => {
+            const st = statsMap[c.id] || EMPTY;
+            const dueDays = st.oldestDue ? daysSince(new Date(st.oldestDue)) : 0;
+            return (
+              <li key={c.id}>
+                <button onClick={() => setSelected(c)} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface/60 active:bg-surface">
+                  <span className="w-10 h-10 rounded-full bg-brand-50 text-brand-700 font-semibold flex items-center justify-center shrink-0">
+                    {c.name.trim().charAt(0).toUpperCase()}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{c.name}</p>
+                    <p className="text-[13px] text-ink-3 num truncate">{c.phone}{c.address ? ` · ${c.address}` : ""}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {st.totalPending > 0 ? (
+                      <>
+                        <p className={`num font-semibold ${dueDays > 30 ? "text-red-700" : "text-amber-700"}`}>{inr(st.totalPending)}</p>
+                        <p className="text-xs text-ink-3">due · {dueDays}d</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="num font-semibold">{st.totalPurchase ? inr(st.totalPurchase) : "—"}</p>
+                        <p className="text-xs text-ink-3">{st.invoiceCount} invoice{st.invoiceCount === 1 ? "" : "s"}</p>
+                      </>
+                    )}
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
-      {/* Customer Ledger Modal */}
-      {selectedCustomer && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl my-4">
-            <div className="flex justify-between items-center p-5 border-b border-gray-100 sticky top-0 bg-white rounded-t-xl z-10">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">{selectedCustomer.name}</h2>
-                <p className="text-sm text-gray-500 flex items-center gap-1 mt-0.5">
-                  <Phone size={13} /> {selectedCustomer.phone}
-                  {selectedCustomer.address && <><MapPin size={13} className="ml-2" /> {selectedCustomer.address}</>}
-                </p>
-              </div>
-              <button onClick={() => setSelectedCustomer(null)} className="text-gray-500 hover:text-gray-700 p-1">
-                <X size={22} />
-              </button>
-            </div>
-
-            {ledgerLoading ? (
-              <div className="p-8 text-center text-gray-500">Loading ledger...</div>
-            ) : (
-              <div className="p-5 space-y-5">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100">
-                    <p className="text-xs text-indigo-700 font-medium">Total Invoiced</p>
-                    <p className="text-lg font-bold text-indigo-900">₹{ledgerTotalInvoiced.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div className="bg-green-50 rounded-lg p-3 border border-green-100">
-                    <p className="text-xs text-green-700 font-medium">Total Paid</p>
-                    <p className="text-lg font-bold text-green-900">₹{ledgerTotalPaid.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div className={`rounded-lg p-3 border ${ledgerPending > 0 ? 'bg-amber-50 border-amber-100' : 'bg-gray-50 border-gray-100'}`}>
-                    <p className={`text-xs font-medium ${ledgerPending > 0 ? 'text-amber-700' : 'text-gray-600'}`}>Pending Balance</p>
-                    <p className={`text-lg font-bold ${ledgerPending > 0 ? 'text-amber-900' : 'text-gray-700'}`}>₹{ledgerPending.toLocaleString('en-IN')}</p>
-                  </div>
-                </div>
-
-                <div className="border border-gray-100 rounded-xl overflow-hidden">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-100 text-gray-600 text-sm">
-                        <th className="p-3">Date</th>
-                        <th className="p-3">Type</th>
-                        <th className="p-3">Details</th>
-                        <th className="p-3 text-right">Amount</th>
-                        <th className="p-3 text-center">Status / Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ledgerEntries.map((entry, i) => (
-                        <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                          <td className="p-3 text-sm text-gray-600">{entry.date.toLocaleDateString('en-IN')}</td>
-                          <td className="p-3">
-                            {entry.type === 'invoice' ? (
-                              <span className="px-2 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-700">Invoice</span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700">Payment</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-gray-800 text-sm font-medium">{entry.label}</td>
-                          <td className="p-3 text-right font-semibold text-gray-900">
-                            {entry.type === 'invoice' ? (
-                              <span className="text-indigo-700">₹{entry.amount.toFixed(2)}</span>
-                            ) : (
-                              <span className="text-green-700">₹{entry.amount.toFixed(2)}</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center">
-                            {entry.type === 'invoice' && entry.sale && (
-                              <div className="flex items-center justify-center gap-2">
-                                {(entry.sale.paymentStatus === 'partial' || entry.sale.paymentStatus === 'unpaid') && (
-                                  <button
-                                    onClick={() => setPaymentSale(entry.sale!)}
-                                    className="text-xs bg-amber-100 text-amber-700 hover:bg-amber-200 px-2 py-1 rounded font-medium"
-                                  >
-                                    Add Payment
-                                  </button>
-                                )}
-                                {entry.sale.paymentStatus === 'paid' && (
-                                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-medium">Paid</span>
-                                )}
-                                <button
-                                  onClick={() => handleDownloadInvoice(entry.sale!)}
-                                  className="text-indigo-600 hover:text-indigo-800 p-1 bg-indigo-50 rounded"
-                                  title="Download Invoice"
-                                >
-                                  <Download size={15} />
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {ledgerEntries.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="p-6 text-center text-gray-500">No transactions found for this customer.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+      {selected && (
+        <LedgerModal
+          customer={selected}
+          sales={sales.filter(s => s.customerId === selected.id)}
+          onClose={() => setSelected(null)}
+          onEdit={() => setEditing(selected)}
+          onChanged={loadData}
+        />
       )}
 
-      {paymentSale && (
-        <AddPaymentModal
-          sale={paymentSale}
-          onClose={() => setPaymentSale(null)}
-          onPaymentAdded={() => {
-            setPaymentSale(null);
-            if (selectedCustomer) openLedger(selectedCustomer);
+      {editing && (
+        <CustomerFormModal
+          customer={editing === "new" ? null : editing}
+          existing={customers}
+          onClose={() => setEditing(null)}
+          onSaved={c => {
+            setEditing(null);
+            if (selected && selected.id === c.id) setSelected(c);
             loadData();
           }}
         />
       )}
     </div>
+  );
+}
+
+function LedgerModal({ customer, sales, onClose, onEdit, onChanged }: {
+  customer: Customer; sales: Sale[]; onClose: () => void; onEdit: () => void; onChanged: () => void;
+}) {
+  const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [viewing, setViewing] = useState<Sale | null>(null);
+  const [paying, setPaying] = useState<Sale | null>(null);
+
+  const load = () => getPayments(customer.id).then(setPayments).catch(() => setPayments([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [customer.id]);
+
+  const invoiced = sales.reduce((s, x) => s + saleTotal(x), 0);
+  const paid = sales.reduce((s, x) => s + (x.paidAmount || 0), 0);
+  const pending = sales.reduce((s, x) => s + (x.pendingAmount || 0), 0);
+  const dueSales = sales.filter(s => (s.pendingAmount || 0) > 0);
+
+  type Entry = { date: Date; kind: "invoice" | "payment"; amount: number; label: string; sale?: Sale; balance?: number };
+  const entries: Entry[] = [
+    ...sales.map(s => ({ date: new Date(s.date), kind: "invoice" as const, amount: saleTotal(s), label: s.billNumber, sale: s })),
+    ...(payments || []).map(p => ({
+      date: new Date(p.createdAt), kind: "payment" as const, amount: p.amount,
+      label: `${p.method}${sales.find(s => s.id === p.invoiceId) ? ` · ${sales.find(s => s.id === p.invoiceId)!.billNumber}` : ""}`,
+    })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime() || (a.kind === "invoice" ? -1 : 1));
+  let run = 0;
+  entries.forEach(e => { run += e.kind === "invoice" ? e.amount : -e.amount; e.balance = run; });
+  entries.reverse();
+
+  const remind = async () => {
+    const s = await getSettings();
+    openWhatsApp(customer.phone, reminderMessage(customer.name, pending, dueSales.map(x => x.billNumber), s.name, s.upiId));
+  };
+
+  return (
+    <>
+      <Modal
+        title={customer.name}
+        subtitle={<span className="num">{customer.phone}{customer.gstin ? ` · GSTIN ${customer.gstin}` : ""}</span>}
+        onClose={onClose}
+        size="lg"
+        fullOnMobile
+        footer={
+          <div className="grid grid-cols-3 gap-2">
+            <a href={`tel:${customer.phone}`} className="btn-secondary"><Phone size={17} /> Call</a>
+            <button className="btn-secondary" onClick={onEdit}><Pencil size={17} /> Edit</button>
+            {pending > 0 ? (
+              <button className="btn-success" onClick={remind}><BellRing size={17} /> Remind</button>
+            ) : (
+              <Link href="/billing" className="btn-primary"><Receipt size={17} /> Bill</Link>
+            )}
+          </div>
+        }
+      >
+        {customer.address && <p className="text-sm text-ink-3 flex items-center gap-1 -mt-1 mb-3"><MapPin size={14} />{customer.address}</p>}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="rounded-lg bg-surface p-2.5"><p className="text-xs text-ink-3">Billed</p><p className="num font-semibold">{inr(invoiced)}</p></div>
+          <div className="rounded-lg bg-emerald-50 p-2.5"><p className="text-xs text-emerald-700">Received</p><p className="num font-semibold text-emerald-800">{inr(paid)}</p></div>
+          <div className={`rounded-lg p-2.5 ${pending > 0 ? "bg-amber-50" : "bg-surface"}`}><p className={`text-xs ${pending > 0 ? "text-amber-700" : "text-ink-3"}`}>Balance</p><p className={`num font-semibold ${pending > 0 ? "text-amber-900" : ""}`}>{inr(pending)}</p></div>
+        </div>
+
+        {dueSales.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm font-semibold mb-2">Unpaid invoices</p>
+            <ul className="space-y-2">
+              {dueSales.map(s => (
+                <li key={s.id} className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50/50 px-3 py-2">
+                  <button className="flex-1 min-w-0 text-left" onClick={() => setViewing(s)}>
+                    <p className="text-sm font-medium num">{s.billNumber} · {formatDate(new Date(s.date))}</p>
+                    <p className="text-xs text-ink-3">{daysSince(s.date)} days · total {inr(saleTotal(s))}</p>
+                  </button>
+                  <span className="num font-semibold text-amber-800">{inr2(s.pendingAmount)}</span>
+                  <button className="btn-success h-9 px-3" onClick={() => setPaying(s)}>Receive</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <p className="text-sm font-semibold mt-5 mb-2">Ledger</p>
+        {payments === null ? <p className="text-sm text-ink-3">Loading…</p> : entries.length === 0 ? (
+          <p className="text-sm text-ink-3">No transactions yet.</p>
+        ) : (
+          <div className="border border-line rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="th px-3">Date</th>
+                  <th className="th px-3">Details</th>
+                  <th className="th px-3 text-right">Amount</th>
+                  <th className="th px-3 text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((e, i) => (
+                  <tr key={i} className={e.sale ? "cursor-pointer hover:bg-surface/60" : ""} onClick={() => e.sale && setViewing(e.sale)}>
+                    <td className="td px-3 num whitespace-nowrap text-ink-2">{formatDate(e.date)}</td>
+                    <td className="td px-3">
+                      <span className={`text-xs font-semibold mr-1.5 ${e.kind === "invoice" ? "text-brand-700" : "text-emerald-700"}`}>{e.kind === "invoice" ? "Invoice" : "Payment"}</span>
+                      <span className="text-ink-2 num">{e.label}</span>
+                      {e.sale && <span className="ml-1.5"><StatusBadge status={e.sale.paymentStatus} /></span>}
+                    </td>
+                    <td className={`td px-3 text-right num font-medium ${e.kind === "payment" ? "text-emerald-700" : ""}`}>{e.kind === "payment" ? "−" : ""}{inr2(e.amount)}</td>
+                    <td className="td px-3 text-right num text-ink-2">{inr2(e.balance || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
+
+      {viewing && <InvoiceDetailModal sale={viewing} onClose={() => setViewing(null)} onAddPayment={s => setPaying(s)} />}
+      {paying && (
+        <AddPaymentModal
+          sale={paying}
+          onClose={() => setPaying(null)}
+          onPaymentAdded={() => {
+            setPaying(null);
+            setViewing(null);
+            // refresh this ledger and the list behind it
+            load();
+            onChanged();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function CustomerFormModal({ customer, existing, onClose, onSaved }: {
+  customer: Customer | null; existing: Customer[]; onClose: () => void; onSaved: (c: Customer) => void;
+}) {
+  const [name, setName] = useState(customer?.name || "");
+  const [phone, setPhone] = useState(customer?.phone || "");
+  const [address, setAddress] = useState(customer?.address || "");
+  const [gstin, setGstin] = useState(customer?.gstin || "");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return toast.error("Enter the customer name");
+    if (phone.length !== 10) return toast.error("Phone number must be 10 digits");
+    if (gstin && !isValidGstin(gstin)) return toast.error("GSTIN looks wrong — check it or leave it empty");
+    const dup = existing.find(c => c.phone === phone && c.id !== customer?.id);
+    if (dup) return toast.error(`${phone} already belongs to ${dup.name}`);
+    setSaving(true);
+    try {
+      const data = { name: name.trim(), phone, address: address.trim(), gstin: gstin.trim() };
+      if (customer) {
+        await updateCustomer(customer.id, data);
+        toast.success("Customer updated");
+        onSaved({ ...customer, ...data });
+      } else {
+        const c = await addCustomer(data);
+        toast.success("Customer added");
+        onSaved(c);
+      }
+    } catch (err) {
+      toast.error((err as Error).message || "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={customer ? "Edit customer" : "Add customer"}
+      subtitle={customer ? "Old invoices keep the details printed on them" : undefined}
+      onClose={onClose}
+      footer={<div className="flex gap-3"><button className="btn-secondary flex-1" onClick={onClose}>Cancel</button><button form="cust-form" className="btn-primary flex-1" disabled={saving}>{saving ? "Saving…" : "Save customer"}</button></div>}
+    >
+      <form id="cust-form" onSubmit={submit} className="space-y-3">
+        <div><label className="label">Name *</label><input className="input" value={name} onChange={e => setName(e.target.value)} autoFocus /></div>
+        <div><label className="label">Phone *</label><input className="input num" type="tel" inputMode="numeric" value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} /></div>
+        <div><label className="label">Address / site</label><input className="input" value={address} onChange={e => setAddress(e.target.value)} /></div>
+        <div><label className="label">GSTIN</label><input className="input uppercase placeholder:normal-case" maxLength={15} value={gstin} onChange={e => setGstin(e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, ""))} placeholder="Optional" /></div>
+      </form>
+    </Modal>
   );
 }

@@ -84,14 +84,14 @@ export function UnitManager() {
         <button
           type="button"
           onClick={() => setShowModal(true)}
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2 text-sm"
+          className="bg-brand-600 text-white px-4 py-2 rounded-lg hover:bg-brand-700 flex items-center gap-2 text-sm"
         >
           <Plus size={18} /> Add Unit
         </button>
       </div>
 
       {units.length === 0 ? (
-        <p className="text-sm text-gray-500 text-center py-8">No units yet. Click "Add Unit" to create one.</p>
+        <p className="text-sm text-gray-500 text-center py-8">No units yet. Click &ldquo;Add Unit&rdquo; to create one.</p>
       ) : (
         <ul className="space-y-2">
           {units.map((unit) => (
@@ -112,10 +112,10 @@ export function UnitManager() {
 
       {/* Add Unit Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-ink/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
             <div className="flex justify-between items-center p-5 border-b border-gray-100">
-              <h3 className="text-base font-bold text-gray-900">Add New Unit</h3>
+              <h3 className="text-base font-bold text-ink">Add New Unit</h3>
               <button type="button" onClick={() => { setShowModal(false); setNewUnit(""); }} className="text-gray-500 hover:text-gray-700">
                 <X size={20} />
               </button>
@@ -130,7 +130,7 @@ export function UnitManager() {
                   onChange={e => setNewUnit(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="e.g. Piece, Box, Kg, Meter"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none"
                 />
               </div>
               <div className="flex gap-3 pt-1">
@@ -145,7 +145,7 @@ export function UnitManager() {
                   type="button"
                   onClick={handleAdd}
                   disabled={adding}
-                  className="flex-1 px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 disabled:opacity-50"
                 >
                   {adding ? "Adding..." : "Add Unit"}
                 </button>

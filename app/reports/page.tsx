@@ -1,70 +1,77 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 import { StockReport } from "../../components/reports/StockReport";
 import { EntryReport } from "../../components/reports/EntryReport";
-import { getProducts, getStockEntries } from "../../lib/db";
-import { Product, StockEntry } from "../../types";
+import { GstReport } from "../../components/reports/GstReport";
+import { ProfitReport } from "../../components/reports/ProfitReport";
+import { Loading, PageHeader } from "../../components/ui/Common";
+import { getProducts, getStockEntries, getSales, getExpenses } from "../../lib/db";
+import { Expense, Product, Sale, StockEntry } from "../../types";
+
+type Tab = "gst" | "profit" | "stock" | "entries";
+const TABS: { value: Tab; label: string }[] = [
+  { value: "gst", label: "GST summary" },
+  { value: "profit", label: "Profit & loss" },
+  { value: "stock", label: "Stock report" },
+  { value: "entries", label: "Stock entries" },
+];
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<"stock" | "entries">("stock");
-  
-  const [products, setProducts] = useState<Product[]>([]);
-  const [entries, setEntries] = useState<StockEntry[]>([]);
+  const [tab, setTab] = useState<Tab>("gst");
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [entries, setEntries] = useState<StockEntry[] | null>(null);
+  const [sales, setSales] = useState<Sale[] | null>(null);
+  const [expenses, setExpenses] = useState<Expense[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadData();
-  }, [activeTab]);
+    const t = new URLSearchParams(window.location.search).get("tab") as Tab | null;
+    if (t && TABS.some(x => x.value === t)) setTab(t);
+  }, []);
 
-  const loadData = async () => {
+  const load = async (force = false) => {
     setLoading(true);
     try {
-      if (activeTab === "stock") {
-        const p = await getProducts();
-        setProducts(p);
-      } else {
-        const [e, p] = await Promise.all([getStockEntries(), getProducts()]);
-        setEntries(e);
-        setProducts(p);
-      }
-    } catch (error) {
-      console.error(error);
+      const jobs: Promise<unknown>[] = [];
+      if ((tab === "stock" || tab === "entries") && (force || !products)) jobs.push(getProducts().then(setProducts));
+      if ((tab === "entries" || tab === "profit") && (force || !entries)) jobs.push(getStockEntries().then(setEntries));
+      if ((tab === "gst" || tab === "profit") && (force || !sales)) jobs.push(getSales().then(setSales));
+      if (tab === "profit" && (force || !expenses)) jobs.push(getExpenses().then(setExpenses));
+      await Promise.all(jobs);
+    } catch {
+      toast.error("Could not load report data");
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 print:hidden">Reports</h1>
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [tab]);
 
-      <div className="flex space-x-1 bg-gray-200/50 p-1 rounded-xl w-fit print:hidden">
-        <button
-          onClick={() => setActiveTab("stock")}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === "stock" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-          }`}
-        >
-          Stock Report
-        </button>
-        <button
-          onClick={() => setActiveTab("entries")}
-          className={`px-6 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === "entries" ? "bg-white text-indigo-600 shadow-sm" : "text-gray-600 hover:text-gray-900 hover:bg-gray-200/50"
-          }`}
-        >
-          Stock Entries Log
-        </button>
+  const ready =
+    (tab === "gst" && sales) || (tab === "profit" && sales && expenses && entries) ||
+    (tab === "stock" && products) || (tab === "entries" && products && entries);
+
+  return (
+    <div>
+      <div className="print:hidden">
+        <PageHeader title="Reports" subtitle="GST, profit and stock" />
+        <div className="flex gap-2 overflow-x-auto no-scrollbar mb-4">
+          {TABS.map(t => (
+            <button key={t.value} onClick={() => setTab(t.value)} className={tab === t.value ? "chip-active" : "chip"}>{t.label}</button>
+          ))}
+        </div>
       </div>
 
-      {loading ? (
-        <div className="text-center py-10">Loading report data...</div>
-      ) : (
-        <div>
-          {activeTab === "stock" && <StockReport products={products} />}
-          {activeTab === "entries" && <EntryReport entries={entries} products={products} onNewEntry={loadData} />}
-        </div>
+      {loading && !ready ? <Loading /> : (
+        <>
+          {tab === "gst" && sales && <GstReport sales={sales} />}
+          {tab === "profit" && sales && expenses && entries && <ProfitReport sales={sales} expenses={expenses} entries={entries} />}
+          {tab === "stock" && products && <StockReport products={products} />}
+          {tab === "entries" && products && entries && <EntryReport entries={entries} products={products.filter(p => !p.isService)} onNewEntry={() => load(true)} />}
+        </>
       )}
     </div>
   );
