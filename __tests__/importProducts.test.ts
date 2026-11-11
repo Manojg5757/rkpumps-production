@@ -54,19 +54,26 @@ describe('buildPlan (synthetic)', () => {
 });
 
 (hasSheet ? describe : describe.skip)('buildPlan on the real borewell sheet', () => {
-  it('plans all 166 rows with no errors', async () => {
+  it('plans every row in the sheet with no errors', async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readSheet } = require('read-excel-file/node');
     const raw = (await readSheet(SHEET, 'Products')) as unknown[][];
+    const header = (raw[0] as unknown[]).map(String);
+    const body = raw.slice(1).filter(r => r.some(c => c !== null && c !== ''));
+    const col = (name: string) => header.indexOf(name);
+    const services = body.filter(r => r[col('Type')] === 'Service').length;
+    const verify = body.filter(r => r[col('Verify with CA')] === 'Yes').length;
+
     const plan = buildPlan(raw, { products: [], categories, units });
     const skipped = plan.rows.filter(r => r.action === 'skip');
     if (skipped.length) console.log(skipped.map(r => `${r.row}: ${r.errors.join('; ')}`));
-    expect(plan.rows.length).toBe(166);
+    expect(plan.rows.length).toBe(body.length);
     expect(plan.counts.skip).toBe(0);
-    expect(plan.counts.create).toBe(166);
-    expect(plan.rows.filter(r => r.isService).length).toBe(8);
-    expect(plan.counts.verify).toBe(15);
+    expect(plan.counts.create).toBe(body.length);
+    expect(plan.rows.filter(r => r.isService).length).toBe(services);
+    expect(plan.counts.verify).toBe(verify);
     expect(plan.saleIncludesGst).toBe(true);
+    expect(plan.rows.some(r => /drilling/i.test(r.name))).toBe(false);
     const pump = plan.rows.find(r => r.itemCode === 'BW-SP-002')!;
     expect(pump.basePrice).toBeCloseTo(12500 / 1.05, 2);
     expect(pump.purchasePrice! < pump.basePrice!).toBe(true);
